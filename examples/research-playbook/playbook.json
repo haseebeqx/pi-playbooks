@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "name": "staged-research",
+  "version": "0.1.0",
+  "description": "Example multi-turn research workflow with a reviewed plan and durable outputs",
+  "invocation": "explicit",
+  "procedure": "PLAYBOOK.md",
+  "applicability": {},
+  "requiredCapabilities": [
+    "read",
+    "write",
+    "bash",
+    "playbook_checkpoint",
+    "playbook_finish"
+  ],
+  "allowedEffectClasses": [
+    "filesystem.read",
+    "filesystem.write",
+    "process.exec",
+    "governance"
+  ],
+  "artifacts": [
+    {
+      "name": "plan",
+      "path": "results/research-plan.md",
+      "stage": "plan",
+      "required": true
+    },
+    {
+      "name": "report",
+      "path": "results/report.md",
+      "stage": "report",
+      "required": true
+    }
+  ],
+  "successPredicates": [
+    {
+      "type": "artifact_nonempty",
+      "path": "results/report.md"
+    }
+  ],
+  "evidencePolicy": {
+    "retainArgumentValues": false,
+    "promotionLevels": [
+      "guarded",
+      "sandboxed"
+    ]
+  }
+}

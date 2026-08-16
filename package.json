@@ -1,0 +1,57 @@
+{
+  "name": "pi-playbooks",
+  "version": "0.0.1",
+  "description": "Governed, self-improving playbook runtime for Pi",
+  "type": "module",
+  "license": "MIT",
+  "author": "Haseeb",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haseebeqx/pi-playbooks.git"
+  },
+  "homepage": "https://github.com/haseebeqx/pi-playbooks#readme",
+  "bugs": {
+    "url": "https://github.com/haseebeqx/pi-playbooks/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "agent-skills",
+    "playbooks",
+    "self-improvement"
+  ],
+  "files": [
+    "extensions",
+    "src",
+    "docs",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/playbooks.ts"
+    ]
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run check && npm test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.84.2",
+    "@earendil-works/pi-coding-agent": "^0.84.2",
+    "@types/node": "^22.15.0",
+    "tsx": "^4.20.0",
+    "typebox": "^1.0.13",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
