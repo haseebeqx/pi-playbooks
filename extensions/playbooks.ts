@@ -50,6 +50,7 @@ const CompleteLearningParameters = Type.Object({
 
 const COMMAND_HELP: ReadonlyArray<readonly [name: string, usage: string, description: string]> = [
   ["run", "run <playbook-name> [request]", "Start an approved playbook or local candidate as written, or provide a request to refine it or create an ad hoc workflow."],
+  ["record", "record [playbook-name]", "Convert the current session so far into a reusable playbook."],
   ["status", "status", "Show the active run, current stage, and status."],
   ["list", "list", "List approved playbooks, project candidate workspaces, and submitted proposals."],
   ["approve", "approve", "Approve the workflow gate currently waiting for your decision."],
@@ -89,6 +90,23 @@ function parseWords(input: string): string[] {
 function suggestedPlaybookName(request: string): string {
   const slug = request.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48).replace(/-$/g, "");
   return slug || "reusable-workflow";
+}
+
+function firstUserText(ctx: ExtensionContext): string | undefined {
+  for (const entry of ctx.sessionManager.getBranch()) {
+    if (entry.type !== "message" || entry.message.role !== "user") continue;
+    const content = entry.message.content;
+    if (typeof content === "string" && content.trim()) return content.trim();
+    if (Array.isArray(content)) {
+      const text = content
+        .filter((item): item is { type: "text"; text: string } => item.type === "text")
+        .map((item) => item.text)
+        .join("\n")
+        .trim();
+      if (text) return text;
+    }
+  }
+  return undefined;
 }
 
 function teamRegistryFor(ctx: ExtensionContext): ReleaseRegistry | undefined {
@@ -278,6 +296,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     destinationArgument: string | undefined,
     ctx: ExtensionContext,
     workflow: "manual" | "automatic" = "manual",
+    learningPurpose: "improve" | "record-session" = "improve",
   ): Promise<void> => {
     if (activeRun) throw new Error("Finish or detach the active run before starting a learning draft");
     const run = await runs.read(runId);
@@ -297,18 +316,23 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       run.startedAt,
       run.completion?.completedAt ?? run.updatedAt,
     );
-    const adHocGuidance = run.releaseScope === "explicit-digest"
-      ? "\nThis began as an ad hoc workflow. If the trajectory contains a genuinely reusable procedure, replace the generic instructions with that procedure and refine the contract description while keeping the user-selected playbook name unless they request a rename. Do not invent reusable instructions when the evidence supports only a one-off task. Add skillDependencies only when they materially improve the workflow."
-      : "";
+    const adHocGuidance = learningPurpose === "record-session"
+      ? "\nThe user explicitly asked to convert the existing session so far into a reusable playbook. Infer the repeatable goal, ordered stages, important decisions, approval points, and verification steps from the conversation so far. The whole prior session context is potential evidence, but do not blindly copy it: omit secrets, credentials, raw outputs, incidental debugging, personal data, absolute paths, and one-off project details. Generalize necessary inputs with clear placeholders or applicability guards. Preserve only commands and automation supported by observed successful execution. Replace the generic procedure and description, keep the user-selected playbook name, and increment the source version."
+      : run.releaseScope === "explicit-digest"
+        ? "\nThis began as an ad hoc workflow. If the trajectory contains a genuinely reusable procedure, replace the generic instructions with that procedure and refine the contract description while keeping the user-selected playbook name unless they request a rename. Do not invent reusable instructions when the evidence supports only a one-off task. Add skillDependencies only when they materially improve the workflow."
+        : "";
     const completionInstruction = workflow === "automatic"
       ? `When the analysis is complete, you MUST call playbook_complete_learning exactly once with runId ${runId}. Use decision no_change when the evidence does not support a safe, material procedural improvement. Use decision propose only after editing the candidate. Do not ask the user to manage files, digests, proposals, or commands; the tool performs deterministic evaluation and presents the only required approval.`
       : `When finished, ask the user to review and run:\n${proposeCommand}`;
     suppressAutomaticOnce = true;
-    pi.sendUserMessage(`Review the completed playbook run ${runId} and identify the smallest evidence-supported procedural improvement.\n\nBase digest: ${run.artifactDigest}\nEditable candidate directory: ${destination}\nOriginal request: ${run.originalPrompt}\nTerminal status: ${run.status}\nCompletion: ${JSON.stringify(run.completion ?? null)}\nEvidence facts (execution-correlated, not causal claims):\n${JSON.stringify(runFacts, null, 2)}\nDeterministic command evidence (minimized from the Pi-owned session trace; command outputs and non-command arguments are omitted):\n${JSON.stringify(commandEvidence, null, 2)}\n\nEdit only the candidate directory, preserve the playbook structure and any declared skill dependencies, increment the source version when materially changed, and do not activate it.${adHocGuidance}\n\nExplicitly evaluate the command evidence for a token- or time-saving deterministic fast path. Add automation only when the observed trajectory supports it:\n1. Prefer a consolidated command when it can replace several observed smaller commands while preserving their checks and failure semantics.\n2. Add a helper under scripts/ only when repeated, stable command sequences justify maintaining one.\nRecord the supporting commands and outcomes in the candidate procedure, plus applicability guards. A successful observed command is evidence that it ran in this trajectory, not proof that it is universally correct. Never invent a command from argument hashes, promote an unexecuted optimization, copy likely credentials, or add a speculative helper. If evidence is insufficient, leave automation out.\n\n${completionInstruction}`);
+    const taskIntroduction = learningPurpose === "record-session"
+      ? `Convert the current Pi session so far into a concise, reusable playbook. Use the prior conversation as evidence and create the smallest workflow that can reliably reproduce its successful process.`
+      : `Review the completed playbook run ${runId} and identify the smallest evidence-supported procedural improvement.`;
+    pi.sendUserMessage(`${taskIntroduction}\n\nBase digest: ${run.artifactDigest}\nEditable candidate directory: ${destination}\nOriginal request: ${run.originalPrompt}\nTerminal status: ${run.status}\nCompletion: ${JSON.stringify(run.completion ?? null)}\nEvidence facts (execution-correlated, not causal claims):\n${JSON.stringify(runFacts, null, 2)}\nDeterministic command evidence (minimized from the Pi-owned session trace; command outputs and non-command arguments are omitted):\n${JSON.stringify(commandEvidence, null, 2)}\n\nEdit only the candidate directory, preserve the playbook structure and any declared skill dependencies, increment the source version when materially changed, and do not activate it.${adHocGuidance}\n\nExplicitly evaluate the command evidence for a token- or time-saving deterministic fast path. Add automation only when the observed trajectory supports it:\n1. Prefer a consolidated command when it can replace several observed smaller commands while preserving their checks and failure semantics.\n2. Add a helper under scripts/ only when repeated, stable command sequences justify maintaining one.\nRecord the supporting commands and outcomes in the candidate procedure, plus applicability guards. A successful observed command is evidence that it ran in this trajectory, not proof that it is universally correct. Never invent a command from argument hashes, promote an unexecuted optimization, copy likely credentials, or add a speculative helper. If evidence is insufficient, leave automation out.\n\n${completionInstruction}`);
     const theme = ctx.ui.theme;
     ctx.ui.notify([
-      theme.fg("success", theme.bold(workflow === "automatic" ? "Automatic playbook learning started" : "Playbook improvement workspace created")),
-      workflow === "automatic" ? theme.fg("muted", "Pi is analyzing the run; no draft or proposal commands are needed.") : destination,
+      theme.fg("success", theme.bold(learningPurpose === "record-session" ? "Recording this session as a playbook" : workflow === "automatic" ? "Automatic playbook learning started" : "Playbook improvement workspace created")),
+      workflow === "automatic" ? theme.fg("muted", learningPurpose === "record-session" ? "Pi is extracting a reusable workflow; no file or proposal commands are needed." : "Pi is analyzing the run; no draft or proposal commands are needed.") : destination,
       "",
       workflow === "automatic"
         ? theme.fg("text", "You will be asked only if Pi finds an improvement that passes deterministic checks.")
@@ -826,6 +850,75 @@ export default function playbooksExtension(pi: ExtensionAPI) {
             ]),
           ];
           ctx.ui.notify(help.join("\n"), "error");
+          return;
+        }
+        if (command === "record") {
+          let name = words.shift();
+          if (words.length > 0) throw new Error("Usage: /playbook record [playbook-name]");
+          if (activeRun) throw new Error(`Run ${activeRun.runId} is already active. Finish or abort it before recording the surrounding session.`);
+          await ctx.waitForIdle();
+          const originalPrompt = firstUserText(ctx);
+          const branch = ctx.sessionManager.getBranch();
+          const hasAssistantWork = branch.some((entry) => entry.type === "message" && entry.message.role === "assistant");
+          if (!originalPrompt || !hasAssistantWork) {
+            throw new Error("There is not enough session history to record yet. Complete a workflow in this session first.");
+          }
+          if (!ctx.hasUI) {
+            throw new Error("Recording an existing session requires an interactive confirmation because the whole active branch may be used.");
+          }
+          const confirmed = await ctx.ui.confirm(
+            "Record this session as a playbook?",
+            "Pi may infer the playbook from the entire current session so far—not only the latest task. That can include earlier instructions, tool usage across session branches, project-specific details, or sensitive information. Pi will try to generalize and redact the workflow, and nothing is approved for future runs until you approve the generated candidate. Continue?",
+          );
+          if (!confirmed) return;
+
+          while (!name) {
+            const entered = await ctx.ui.input("Name this reusable playbook", suggestedPlaybookName(originalPrompt));
+            if (!entered?.trim()) return;
+            name = entered.trim();
+          }
+          if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
+            throw new Error("Playbook names use lowercase letters, numbers, and single hyphens (for example: release-check)");
+          }
+          if (await resolveNamed(name, artifacts, personal, team)) {
+            throw new Error(`An approved playbook named ${name} already exists. Choose a new name, or run it and let automatic learning improve it.`);
+          }
+
+          const release = await adHocRelease(name);
+          const sessionFile = ctx.sessionManager.getSessionFile();
+          const run = await runs.create({
+            playbookName: name,
+            artifactDigest: release.digest,
+            releaseScope: "explicit-digest",
+            cwd: ctx.cwd,
+            sessionId: ctx.sessionManager.getSessionId(),
+            ...(sessionFile ? { sessionFile } : {}),
+            originalPrompt,
+            toolAttestations: attestTools(release.contract.requiredCapabilities, toolMetadata(pi)),
+          });
+          const headerTimestamp = ctx.sessionManager.getHeader()?.timestamp;
+          const firstBranchTimestamp = branch[0]?.timestamp;
+          const captureStartedAt = headerTimestamp ?? firstBranchTimestamp;
+          if (captureStartedAt && Number.isFinite(Date.parse(captureStartedAt))) run.startedAt = captureStartedAt;
+          const capturedAt = new Date().toISOString();
+          run.status = "completed";
+          run.completion = {
+            summary: "Existing Pi session captured for reusable workflow extraction",
+            completedAt: capturedAt,
+            predicateResults: [],
+          };
+          await runs.save(run);
+          const capturedLeaf = ctx.sessionManager.getLeafId();
+          await ledger.append({
+            type: "SESSION_CAPTURED",
+            runId: run.runId,
+            assignmentId: run.assignmentId,
+            sessionId: run.sessionId,
+            artifactDigest: run.artifactDigest,
+            ...(capturedLeaf ? { branchEntryId: capturedLeaf } : {}),
+            reason: "user confirmed conversion of the current session into a reusable playbook",
+          });
+          await startDraft(run.runId, undefined, ctx, "automatic", "record-session");
           return;
         }
         if (command === "seal") {

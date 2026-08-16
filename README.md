@@ -4,8 +4,11 @@ Pi Playbooks is a [Pi](https://pi.dev) extension for running repeatable work as 
 
 A playbook can be a simple checklist or a multi-stage procedure with scripts, references, output requirements, approval gates, and optional [Agent Skills](https://agentskills.io/). Pi Playbooks pins every run to an immutable snapshot, records what happened, and lets Pi prepare improvements in an isolated workspace. Nothing is activated until you explicitly approve it.
 
+You can work normally and record the successful session afterward. A second, advanced mode starts a controlled recording before the work when checkpoints, approval gates, and evidence governance are needed.
+
 ```text
-Run work → review the result → close the run → automatic learning → approve or reject a verified update
+Record option: work with pi normally → /playbook record → approve → run again anytime
+Controlled option:    /playbook → governed work → review and close → approve → run again anytime
 ```
 
 > [!IMPORTANT]
@@ -68,9 +71,42 @@ Local and Git source identifiers should be passed to `remove` in the same form i
 
 ## Quick start
 
-### Start without writing a playbook
+There are **two ways to create a playbook**:
 
-In Pi, run:
+1. **Record an existing session** — the easiest path for most users. Work normally first, then turn the successful session into a reusable workflow.
+2. **Start a controlled recording** — begin with `/playbook` when you need governance during the work itself, including a pinned procedure, checkpoints, approval gates, and recorded evidence. This is the more advanced path.
+
+Both modes produce a candidate that must pass deterministic checks and receive your approval before it becomes the playbook used by future runs.
+
+### Mode 1: Record an existing session
+
+Complete your task in Pi normally. When the workflow is worth repeating, run:
+
+```text
+/playbook record
+```
+
+You can provide the reusable name up front:
+
+```text
+/playbook record release-check
+```
+
+Pi warns that extraction may use the **entire current session so far**, not only the latest task. Earlier instructions, tool usage across session branches, project-specific details, and sensitive information may therefore influence the generated workflow. Continue only when that session is appropriate to reuse. Pi is instructed to omit secrets and incidental details, and the generated candidate is not activated until you approve it.
+
+After confirmation, Pi extracts and generalizes the repeatable stages, checks, commands, and approval points. If the session does not contain a meaningful reusable workflow, Pi creates nothing rather than inventing one. Otherwise, it runs deterministic candidate checks and presents one approval decision.
+
+Recording the successful path can reduce repeated planning, exploration, and trial-and-error on later runs, especially for stable multi-step work. Once approved, repeat the workflow whenever needed:
+
+```text
+/playbook run release-check
+```
+
+This mode requires prior work in the session. If `/playbook record` is the only thing in a new session, Pi reports that there is not enough history and does not create a playbook.
+
+### Mode 2: Start a controlled recording
+
+Use this mode when the original execution itself needs playbook governance and evidence collection. In Pi, run:
 
 ```text
 /playbook
@@ -93,11 +129,11 @@ If `release-check` is already approved, that version is used. An approved playbo
 /playbook run release-check
 ```
 
-An optional request can refine the run. A matching local candidate under `.pi/playbooks/candidates/` also runs without a request: Pi seals its current contents and pins the run to that immutable snapshot without promoting it. If neither an approved release nor a local candidate matches the name, Pi explains that the run can become a reproducible workflow, then asks what you want it to do in interactive modes (or requires the request inline in non-interactive modes). It creates a protected ad hoc workflow under that name, and you can continue giving instructions and feedback until you review and close the run. An ad hoc workflow is governed and recorded, but is **not** automatically reusable or approved.
+An optional request can refine the run. A matching local candidate under `.pi/playbooks/candidates/` also runs without a request: Pi seals its current contents and pins the run to that immutable snapshot without promoting it. If neither an approved release nor a local candidate matches the name, Pi creates a protected ad hoc workflow under that name. Continue giving instructions and feedback until you review and close the run. An ad hoc workflow is governed and recorded, but is **not** automatically reusable or approved.
 
-Only one playbook run can be attached to a Pi session at a time. `/playbook` shows the current run instead of starting another when one is active.
+Only one controlled playbook run can be attached to a Pi session at a time. `/playbook` shows the current run instead of starting another when one is active.
 
-### Review and close the result
+### Review and close a controlled recording
 
 When Pi calls `playbook_finish`, the run enters `review` rather than closing. You can ask questions or request changes normally; the same pinned playbook and policy remain active.
 
@@ -153,6 +189,7 @@ Run `/playbook <unknown-command>` to display in-Pi usage for every command.
 |---|---|
 | `/playbook` | Start interactively, or show the attached run. |
 | `/playbook run <name> [request]` | Run an approved playbook or local project candidate as written, optionally refining it with a request. For an unknown name, Pi explains how the run can become a reproducible, improving workflow, asks for the first instructions interactively, and creates a named ad hoc run. |
+| `/playbook record [name]` | Convert the current session so far into a reusable playbook. Requires an interactive whole-session privacy warning and explicit confirmation before extraction. |
 | `/playbook status` | Show run ID, status, stage, digest, and pending gate. |
 | `/playbook list` | List approved personal/project playbooks, local candidate workspaces, and proposals. |
 | `/playbook approve` | Approve the currently pending workflow gate. |
