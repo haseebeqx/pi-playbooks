@@ -56,16 +56,20 @@ export function effectClassFor(toolName: string): string {
   return `tool:${toolName}`;
 }
 
-function isHighRisk(toolName: string, input: Record<string, unknown>): boolean {
+function highRiskReason(toolName: string, input: Record<string, unknown>): string | undefined {
   if (toolName === "write" || toolName === "edit") {
     const path = String(input.path ?? "");
-    return /(^|[/\\])(?:\.env|\.git|\.ssh)(?:$|[/\\])|package-lock\.json$/.test(path);
+    if (/(^|[/\\])(?:\.env|\.git|\.ssh)(?:$|[/\\])|package-lock\.json$/.test(path)) {
+      return `writing protected path ${path} requires confirmation`;
+    }
   }
   if (toolName === "bash") {
     const command = String(input.command ?? "");
-    return /\b(?:sudo|rm|chmod|chown|git\s+push|npm\s+publish|docker\s+(?:rm|system\s+prune)|terraform\s+(?:apply|destroy)|pulumi\s+(?:up|destroy)|kubectl\s+(?:apply|create|delete|patch|replace|rollout)|helm\s+(?:install|upgrade|uninstall)|aws\s+(?:cloudformation\s+(?:deploy|create|update|delete)|ecs\s+update-service|s3\s+(?:cp|mv|rm|sync)|lambda\s+(?:create|update|delete)|deploy)|gcloud\s+(?:app\s+deploy|run\s+deploy|functions\s+deploy)|serverless\s+deploy|fly\s+deploy)\b/i.test(command);
+    if (/\b(?:sudo|rm|chmod|chown|git\s+push|npm\s+publish|docker\s+(?:rm|system\s+prune)|terraform\s+(?:apply|destroy)|pulumi\s+(?:up|destroy)|kubectl\s+(?:apply|create|delete|patch|replace|rollout)|helm\s+(?:install|upgrade|uninstall)|aws\s+(?:cloudformation\s+(?:deploy|create|update|delete)|ecs\s+update-service|s3\s+(?:cp|mv|rm|sync)|lambda\s+(?:create|update|delete)|deploy)|gcloud\s+(?:app\s+deploy|run\s+deploy|functions\s+deploy)|serverless\s+deploy|fly\s+deploy)\b/i.test(command)) {
+      return "the command contains a privileged, destructive, publishing, deployment, or infrastructure operation";
+    }
   }
-  return false;
+  return undefined;
 }
 
 export function decide(contract: PlaybookContract, toolName: string, input: Record<string, unknown>): PolicyDecision {
@@ -73,6 +77,7 @@ export function decide(contract: PlaybookContract, toolName: string, input: Reco
   const allowed = contract.allowedEffectClasses.includes("*") || contract.allowedEffectClasses.includes(effectClass);
   const enforcementLevel: EnforcementLevel = toolName.startsWith("playbook_") ? "guarded" : "observed";
   if (!allowed) return { decision: "deny", effectClass, enforcementLevel, reason: `${effectClass} is not declared by the playbook` };
-  if (isHighRisk(toolName, input)) return { decision: "require_approval", effectClass, enforcementLevel, reason: "high-risk operation requires one-action approval" };
+  const approvalReason = highRiskReason(toolName, input);
+  if (approvalReason) return { decision: "require_approval", effectClass, enforcementLevel, reason: approvalReason };
   return { decision: "allow", effectClass, enforcementLevel, reason: `${effectClass} is declared` };
 }

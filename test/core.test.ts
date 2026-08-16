@@ -279,11 +279,16 @@ test("success predicates and effect policy fail closed", async () => {
   await writeFile(join(root, "results", "report.md"), "report\n");
   assert.equal((await evaluatePredicates(parsed, root))[0]?.passed, true);
   assert.equal(decide(parsed, "write", { path: "x" }).decision, "deny");
-  assert.equal(decide(parsed, "bash", { command: "sudo rm -rf /tmp/x" }).decision, "require_approval");
+  const destructive = decide(parsed, "bash", { command: "sudo rm -rf /tmp/x" });
+  assert.equal(destructive.decision, "require_approval");
+  assert.match(destructive.reason, /privileged, destructive/);
   assert.equal(decide(parsed, "bash", { command: "rm -r -f /tmp/x" }).decision, "require_approval");
   const adHoc = validateContract(contract({ allowedEffectClasses: ["*"] }));
   assert.equal(decide(adHoc, "bash", { command: "terraform apply plan.tfplan" }).decision, "require_approval");
   assert.equal(decide(adHoc, "bash", { command: "aws cloudformation deploy --stack-name app" }).decision, "require_approval");
+  const protectedWrite = decide(adHoc, "edit", { path: ".env" });
+  assert.equal(protectedWrite.decision, "require_approval");
+  assert.match(protectedWrite.reason, /protected path \.env/);
 });
 
 test("run artifacts cannot resolve through symlinks outside the run directory", async () => {

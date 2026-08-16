@@ -140,6 +140,15 @@ export default function playbooksExtension(pi: ExtensionAPI) {
   const blockedCalls = new Set<string>();
   let batchBarrierToolCallId: string | undefined;
   let suppressAutomaticOnce = false;
+  let learningActive = false;
+  const governedToolNames = new Set(["playbook_checkpoint", "playbook_finish", "playbook_complete_learning"]);
+
+  const syncGovernedTools = () => {
+    const active = pi.getActiveTools().filter((name) => !governedToolNames.has(name));
+    if (activeRun) active.push("playbook_checkpoint", "playbook_finish");
+    else if (learningActive) active.push("playbook_complete_learning");
+    pi.setActiveTools([...new Set(active)]);
+  };
 
   const appendFact = async (ctx: ExtensionContext, fact: Omit<LedgerFact, "factId" | "timestamp">) => {
     const enriched: Omit<LedgerFact, "factId" | "timestamp"> = { ...fact, sessionId: ctx.sessionManager.getSessionId() };
@@ -157,6 +166,22 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     activeRun = run;
     activeContract = run ? await artifacts.contract(run.artifactDigest) : undefined;
     ctx.ui.setStatus("pi-playbooks", run ? `playbook: ${run.playbookName} (${run.status})` : undefined);
+    if (run?.pendingGate) {
+      ctx.ui.setWidget("pi-playbooks-approval", [
+        `Approval required · ${run.playbookName}`,
+        run.pendingGate.prompt,
+        "Use /playbook approve to continue, or send a message describing the changes you want.",
+      ]);
+    } else if (run?.status === "review" && run.completionReview) {
+      ctx.ui.setWidget("pi-playbooks-approval", [
+        `Ready for review · ${run.playbookName}`,
+        run.completionReview.summary,
+        "Ask for changes normally, or use /playbook close when satisfied.",
+      ]);
+    } else {
+      ctx.ui.setWidget("pi-playbooks-approval", undefined);
+    }
+    syncGovernedTools();
   };
 
   const adHocRelease = async (name: string): Promise<ResolvedRelease> => {
@@ -256,6 +281,23 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     await setActive(activeRun, ctx);
   };
 
+  const requestGateRevision = async (ctx: ExtensionContext, revision?: string): Promise<void> => {
+    if (!activeRun?.pendingGate || activeRun.status !== "paused") throw new Error("No playbook approval gate is pending");
+    const gate = activeRun.pendingGate;
+    activeRun.status = "running";
+    delete activeRun.pendingGate;
+    await runs.save(activeRun);
+    await appendFact(ctx, {
+      type: "GATE_REVISION_REQUESTED",
+      reason: gate.id,
+      data: {
+        gatePromptHash: hashArguments(gate.prompt),
+        ...(revision ? { revisionHash: hashArguments(revision) } : {}),
+      },
+    });
+    await setActive(activeRun, ctx);
+  };
+
   const closeReviewedRun = async (ctx: ExtensionContext): Promise<PlaybookRun> => {
     if (!activeRun || activeRun.status !== "review" || !activeRun.completionReview) {
       throw new Error("No playbook run is ready to close. Complete the work and wait for Pi to submit it for review first.");
@@ -328,6 +370,8 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       ? `When the analysis is complete, you MUST call playbook_complete_learning exactly once with runId ${runId}. Use decision no_change when the evidence does not support a safe, material procedural improvement. Use decision propose only after editing the candidate. Do not ask the user to manage files, digests, proposals, or commands; the tool performs deterministic evaluation and presents the only required approval.`
       : `When finished, ask the user to review and run:\n${proposeCommand}`;
     suppressAutomaticOnce = true;
+    learningActive = workflow === "automatic";
+    syncGovernedTools();
     const taskIntroduction = learningPurpose === "record-session"
       ? `Convert the current Pi session so far into a concise, reusable playbook. Use the prior conversation as evidence and create the smallest workflow that can reliably reproduce its successful process.`
       : `Review the completed playbook run ${runId} and identify the smallest evidence-supported procedural improvement.`;
@@ -508,12 +552,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       if (event.text.trim().toLowerCase() === "approved") {
         await approveGate(ctx);
       } else {
-        const gate = activeRun.pendingGate;
-        activeRun.status = "running";
-        delete activeRun.pendingGate;
-        await runs.save(activeRun);
-        await appendFact(ctx, { type: "GATE_REVISION_REQUESTED", reason: gate.id, data: { gatePromptHash: hashArguments(gate.prompt) } });
-        await setActive(activeRun, ctx);
+        await requestGateRevision(ctx, event.text.trim());
       }
     }
     return { action: "continue" };
@@ -613,9 +652,14 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         await appendFact(ctx, { type: "BLOCKED", toolCallId: event.toolCallId, toolName: event.toolName, argsHash, enforcementLevel: decision.enforcementLevel, policyVersion: POLICY_VERSION, reason: "approval required but no UI is available" });
         return { block: true, reason: "Approval required but unavailable" };
       }
+      const action = event.toolName === "bash"
+        ? String(input.command ?? "")
+        : (event.toolName === "write" || event.toolName === "edit")
+          ? String(input.path ?? "")
+          : JSON.stringify(input, null, 2);
       const approved = await ctx.ui.confirm(
-        `Approve one ${event.toolName} action?`,
-        `${JSON.stringify(input, null, 2)}\n\nPlaybook: ${activeRun.playbookName}\nDigest: ${activeRun.artifactDigest.slice(0, 12)}…\nReason: ${decision.reason}`,
+        `Allow this ${event.toolName} action once?`,
+        `Reason: ${decision.reason}\n\nAction:\n${action}\n\nPlaybook: ${activeRun.playbookName}\nThis approval applies only to this exact action.`,
       );
       if (!approved) {
         blockedCalls.add(event.toolCallId);
@@ -657,7 +701,10 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       return { result: { output: `Blocked by active playbook: ${decision.reason}`, exitCode: 126, cancelled: false, truncated: false } };
     }
     if (decision.decision === "require_approval") {
-      const approved = await ctx.ui.confirm("Approve one user shell command?", `${event.command}\n\n${decision.reason}`);
+      const approved = await ctx.ui.confirm(
+        "Allow this shell command once?",
+        `Reason: ${decision.reason}\n\nCommand:\n${event.command}\n\nThis approval applies only to this exact command.`,
+      );
       if (!approved) {
         await appendFact(ctx, { type: "USER_REJECTED", toolName: "user_bash", argsHash, enforcementLevel: "observed", policyVersion: POLICY_VERSION, reason: decision.reason });
         return { result: { output: "Rejected by user", exitCode: 126, cancelled: false, truncated: false } };
@@ -674,6 +721,10 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     promptGuidelines: ["Use playbook_complete_learning exactly once when an automatic playbook-learning review instructs you to complete it."],
     parameters: CompleteLearningParameters,
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+      // The completion call is terminal for the learning turn. Remove all
+      // playbook-only tools before the next model request, even if evaluation fails.
+      learningActive = false;
+      syncGovernedTools();
       const run = await runs.read(params.runId);
       if (run.status !== "completed" && run.status !== "failed" && run.status !== "abandoned") {
         throw new Error("Automatic learning requires a closed evidence run");
@@ -850,9 +901,49 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         data: { stage: params.stage, artifacts: artifactHashes, ...(params.gate ? { gateId: params.gate.id } : {}) },
       });
       await setActive(activeRun, ctx);
+
+      let gateResolution: "approved" | "revision_requested" | "paused" | undefined;
+      let revision: string | undefined;
+      if (params.gate && ctx.hasUI) {
+        const choice = await ctx.ui.select(
+          "Workflow approval required",
+          ["Approve and continue", "Request changes", "Keep paused"],
+        );
+        if (choice === "Approve and continue") {
+          await approveGate(ctx);
+          gateResolution = "approved";
+        } else if (choice === "Request changes") {
+          const requested = await ctx.ui.input("What should Pi change?", "Describe the revision");
+          if (requested?.trim()) {
+            revision = requested.trim();
+            await requestGateRevision(ctx, revision);
+            gateResolution = "revision_requested";
+          } else {
+            gateResolution = "paused";
+          }
+        } else {
+          gateResolution = "paused";
+        }
+      } else if (params.gate) {
+        gateResolution = "paused";
+      }
+
+      const text = gateResolution === "approved"
+        ? `Checkpoint ${params.stage} saved. The user approved ${params.gate!.id}; continue with the next stage.`
+        : gateResolution === "revision_requested"
+          ? `Checkpoint ${params.stage} saved. The user requested changes before approval: ${revision}`
+          : params.gate
+            ? `Checkpoint ${params.stage} saved. Approval ${params.gate.id} is pending; do not continue to later stages.`
+            : `Checkpoint ${params.stage} saved.`;
       return {
-        content: [{ type: "text", text: params.gate ? `Checkpoint ${params.stage} saved; run paused for approval at ${params.gate.id}.` : `Checkpoint ${params.stage} saved.` }],
-        details: { runId: activeRun.runId, stage: params.stage, artifacts: artifactHashes, paused: Boolean(params.gate) },
+        content: [{ type: "text", text }],
+        details: {
+          runId: activeRun.runId,
+          stage: params.stage,
+          artifacts: artifactHashes,
+          paused: activeRun.status === "paused",
+          ...(gateResolution ? { gateResolution } : {}),
+        },
       };
     },
   });
@@ -889,15 +980,6 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         data: { outcome: params.outcome, predicateResults },
       });
       await setActive(activeRun, ctx);
-      const theme = ctx.ui.theme;
-      ctx.ui.notify([
-        theme.fg("success", theme.bold("Work is ready for your review")),
-        `${activeRun.playbookName} · ${activeRun.runId}`,
-        params.summary,
-        "",
-        theme.fg("text", "Ask questions or request changes normally; they remain part of this governed run."),
-        `When satisfied, close it with ${theme.fg("success", "/playbook close")}`,
-      ].join("\n"), "info");
       return {
         content: [{
           type: "text",
@@ -1437,4 +1519,8 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       }
     },
   });
+
+  // Custom tools are active by default when registered. Start from a neutral
+  // state; session_start will re-enable the right pair if it restores a run.
+  syncGovernedTools();
 }

@@ -463,10 +463,12 @@ For the complete field reference, see [`docs/PLAYBOOK_FORMAT.md`](docs/PLAYBOOK_
 
 Pi Playbooks has two different approval mechanisms:
 
-1. **Workflow gates** pause the whole procedure between stages. They are created by `playbook_checkpoint` and resumed with `/playbook approve` or revised by an ordinary response.
-2. **One-action approvals** are interactive confirmations for a single high-risk tool call. Approval is bound to that tool call's hashed arguments and does not approve the rest of the stage or run.
+1. **Workflow gates** pause the whole procedure between stages. In interactive modes, a dedicated dialog offers **Approve and continue**, **Request changes**, or **Keep paused**. A persistent widget keeps unresolved gates separate from ordinary assistant output. You can also use `/playbook approve`; an ordinary response requests revisions.
+2. **One-action approvals** are clear Yes/No confirmations for a single high-risk tool call. The dialog shows the exact action, why it matched the policy, and that approval applies only once. Approval is bound to that tool call's hashed arguments and does not approve the rest of the stage or run.
 
-Selected high-risk writes and shell operations—such as edits to `.env`, `.git`, `.ssh`, or `package-lock.json`, destructive commands, publishing, pushes, and common infrastructure/deployment commands—require one-action approval even when their effect class is declared. In non-UI modes, an action that requires confirmation is blocked.
+Selected high-risk writes and shell operations—such as edits to `.env`, `.git`, `.ssh`, or `package-lock.json`, destructive commands, publishing, pushes, and common infrastructure/deployment commands—require one-action approval even when their effect class is declared. In non-UI modes, an action that requires confirmation is blocked. Review-ready runs are also shown in the dedicated playbook widget rather than as a multi-line notification mixed into normal output.
+
+The checkpoint and finish tools—and their model-facing prompt guidance—are active only while a governed run is attached. The learning-completion tool is active only during automatic playbook learning. Outside those states, Pi Playbooks leaves ordinary Pi turns unchanged.
 
 A run can have these statuses:
 
