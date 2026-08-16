@@ -86,7 +86,7 @@ Version 1 supports deterministic filesystem predicates:
 }
 ```
 
-`playbook_finish` rejects a `success` outcome while any predicate fails. A valid outcome moves the run into review rather than closing it: follow-up questions and requested changes remain governed by the same pinned playbook. Material changes can update the proposed outcome with another `playbook_finish` call. The user closes the reviewed run explicitly with `/playbook close`. Interactive close asks whether to immediately create an editable draft from the closed run; declining leaves `/playbook draft <run-id>` available for later. Failure and abandonment remain recordable even when outputs are incomplete.
+`playbook_finish` rejects a `success` outcome while any predicate fails. A valid outcome moves the run into review rather than closing it: follow-up questions and requested changes remain governed by the same pinned playbook. Material changes can update the proposed outcome with another `playbook_finish` call. The user closes the reviewed run explicitly with `/playbook close`, which starts automatic evidence-based learning. Pi either records `no_change` or prepares, seals, and deterministically evaluates a candidate before presenting one human approval decision. Failure and abandonment remain recordable even when outputs are incomplete. `/playbook draft` remains available as an advanced manual fallback.
 
 ## Evidence policy
 
@@ -99,9 +99,9 @@ Version 1 supports deterministic filesystem predicates:
 }
 ```
 
-The current ledger always minimizes action arguments to hashes. Promotion levels describe admissible evidence for future trial governance; `0.0.1` promotion is manual.
+The current ledger always minimizes action arguments to hashes. Promotion levels describe admissible evidence for future trial governance; current candidates receive deterministic checks and still require explicit human approval rather than unattended promotion.
 
-When `/playbook draft` can access the run's Pi session trace, it separately builds a transient, run-bounded summary of bash command text and outcomes so the drafting model can identify deterministic consolidation or helper-script opportunities. Tool output and non-command arguments are omitted, likely inline credentials are redacted, and this summary is not written to the fact ledger. Automation must be supported by observed execution evidence; an unexecuted suggestion or argument hash is insufficient.
+When automatic learning or `/playbook draft` can access the run's Pi session trace, it separately builds a transient, run-bounded summary of bash command text and outcomes so the learning model can identify deterministic consolidation or helper-script opportunities. Tool output and non-command arguments are omitted, likely inline credentials are redacted, and this summary is not written to the fact ledger. Automation must be supported by observed execution evidence; an unexecuted suggestion or argument hash is insufficient.
 
 ## Workflow gates
 

@@ -33,18 +33,21 @@ Implemented foundations:
 - run, assignment, branch-entry, action, artifact, argument-hash, policy-version, and enforcement provenance;
 - negative-path facts;
 - deterministic artifact hashes and completion predicates;
-- agent-assisted revision workspaces derived from completed runs;
+- automatic agent-assisted learning after the user closes a reviewed run;
+- isolated revision workspaces derived from completed runs without requiring users to manage directories or identifiers;
+- an explicit `propose` or `no_change` learning verdict;
 - extraction of specifically named reusable candidates from ad hoc trajectories when evidence supports reuse;
 - draft-time extraction of run-bounded bash command/outcome summaries from Pi-owned session traces, with outputs omitted and likely inline credentials redacted;
 - evidence-gated identification of either a consolidated deterministic command or a maintainable helper-script opportunity, without generating speculative automation;
 - optional skill dependencies that may be introduced in later candidates without mutating installed skills;
 - candidate proposals carrying an exact base digest, evidence run IDs, and evidence watermark;
 - equivalent-proposal suppression and stale-lineage classification;
+- automatic handoff of supported candidates to deterministic release evaluation;
 - no causal claims from ordinary executions.
 
-Candidate extraction is intentionally agent-assisted in `0.0.1`: `/playbook draft` supplies a minimized run trajectory and an editable copy of the sealed base. It also transiently summarizes bash commands observed during the run, grouped with success/failure counts. Raw command output and non-command arguments are excluded, likely inline credentials are redacted, and raw commands are not added to the fact ledger. The drafting instructions may preserve a consolidated command or add a helper script only when this execution evidence supports the optimization; a successful observation is not treated as a causal or universal claim.
+Candidate extraction is intentionally agent-assisted: closing a reviewed run automatically supplies a minimized trajectory and an editable copy of the sealed base to the learning turn. Manual `/playbook draft` remains available as an advanced fallback. Learning also transiently summarizes bash commands observed during the run, grouped with success/failure counts. Raw command output and non-command arguments are excluded, likely inline credentials are redacted, and raw commands are not added to the fact ledger. The learning instructions may preserve a consolidated command or add a helper script only when this execution evidence supports the optimization; a successful observation is not treated as a causal or universal claim.
 
-The workspace stores local base/run provenance so `/playbook propose <candidate-directory>` does not require internal digests or run identifiers; a unique playbook name is also accepted. That provenance is excluded from the sealed artifact. The resulting proposal record has no trial, activation, or promotion authority.
+The workspace stores local base/run provenance and whether the workflow is automatic or manual. This metadata is excluded from the sealed artifact. Automatic learning submits its candidate through `playbook_complete_learning`; manual `/playbook propose` remains available without requiring users to supply internal digests. A proposal has no activation authority: deterministic checks and explicit human approval occur before the personal release pointer changes.
 
 ## Release / governance plane
 
@@ -53,11 +56,13 @@ Implemented personal/local path:
 - schema validation;
 - immutable content-addressed sealing;
 - artifact re-hashing;
+- deterministic candidate checks for terminal evidence, exact base lineage, stable identity, an updated source version, a retained procedure, and material content changes;
+- automatic proposal creation from the learning plane;
+- a single human-reviewed approval dialog showing the candidate summary and changed files;
 - stable registry pointer;
-- manual bootstrap promotion;
-- proposal-required updates after bootstrap;
-- stale-base rejection before promotion;
-- manual proposal rejection and promotion;
+- automatic personal promotion only after that explicit approval;
+- manual bootstrap, draft, proposal, rejection, and promotion commands retained as advanced controls;
+- stale-base rejection immediately before promotion;
 - rollback for future runs without changing active assignments;
 - base digest retained on every run.
 

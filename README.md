@@ -2,10 +2,10 @@
 
 Pi Playbooks is a [Pi](https://pi.dev) extension for running repeatable work as **versioned, governed workflows**.
 
-A playbook can be a simple checklist or a multi-stage procedure with scripts, references, output requirements, approval gates, and optional [Agent Skills](https://agentskills.io/). Pi Playbooks pins every run to an immutable snapshot, records what happened, and lets Pi prepare improvements in a separate editable workspace. Nothing is activated until you explicitly promote it.
+A playbook can be a simple checklist or a multi-stage procedure with scripts, references, output requirements, approval gates, and optional [Agent Skills](https://agentskills.io/). Pi Playbooks pins every run to an immutable snapshot, records what happened, and lets Pi prepare improvements in an isolated workspace. Nothing is activated until you explicitly approve it.
 
 ```text
-Run work → review the result → close the run → draft an improvement → propose → promote or reject
+Run work → review the result → close the run → automatic learning → approve or reject a verified update
 ```
 
 > [!IMPORTANT]
@@ -107,32 +107,13 @@ When satisfied:
 /playbook close
 ```
 
-Pi offers to create a reusable candidate. Declining only skips the immediate draft—you can create one later with the run ID:
-
-```text
-/playbook draft <run-id>
-```
+Closing starts the learning workflow automatically. Pi analyzes the minimized evidence, edits an isolated candidate only when a material improvement is supported, seals it, and runs deterministic release checks. If the candidate passes, you receive one meaningful decision: approve it for future runs or reject it. You do not need to manage candidate directories, run IDs, proposal IDs, or digests.
 
 ### Turn the run into a reusable playbook
 
-The normal improvement flow is:
+For an ad hoc run, the same automatic learning flow extracts a reusable procedure when the evidence supports one. For an approved playbook, it proposes the smallest supported revision. If there is no safe material improvement, Pi records that outcome and removes the temporary workspace without interrupting you.
 
-```text
-/playbook draft <run-id>
-# Review Pi's edits under .pi/playbooks/candidates/.
-# Then use the exact proposal command Pi prints, for example:
-/playbook propose release-check-a1b2c3d4
-# Review the submitted proposal shown by /playbook list.
-/playbook promote <proposal-id>
-```
-
-To discard it instead:
-
-```text
-/playbook reject <proposal-id> Too specific to this repository
-```
-
-Drafting, proposing, and promoting are separate operations. Neither `draft` nor `propose` changes the approved version.
+The lower-level `draft`, `propose`, `promote`, and `reject` commands remain available as advanced recovery and externally prepared-candidate controls; they are not the normal user journey.
 
 ## How the lifecycle works
 
@@ -156,13 +137,13 @@ The model-facing `playbook_checkpoint` tool records a stage, summary, optional o
 
 `playbook_finish` evaluates deterministic success predicates. A successful result is rejected if any predicate fails. A valid outcome enters `review`, where follow-up work remains governed.
 
-### 6. Close, draft, and propose
+### 6. Close and learn automatically
 
-Only the user closes a reviewed run. `draft` copies the pinned snapshot to an editable project candidate and gives Pi a minimized run trajectory. When the Pi session trace is available, the draft also receives a run-bounded summary of bash commands and their outcomes so it can identify an evidence-supported consolidated command or helper-script opportunity. It must not add speculative automation merely because a command seems useful. `propose` seals the candidate without activating it. Stale proposals cannot be promoted.
+Only the user closes a reviewed run. Closure automatically copies the pinned snapshot into an isolated learning workspace and gives Pi a minimized run trajectory. When the Pi session trace is available, learning also receives a run-bounded summary of bash commands and outcomes. Pi must explicitly choose either `no_change` or an evidence-supported candidate; speculative automation is prohibited.
 
-### 7. Promote, reject, or roll back
+### 7. Evaluate and approve
 
-Promotion changes the personal release pointer used by **future** runs. Rejection changes nothing. Rollback swaps the current and previous personal versions; active runs remain pinned.
+A candidate is sealed and checked for artifact integrity, terminal evidence, exact base lineage, stable playbook identity, an updated source version, a retained non-empty procedure, and a material content change. A stale or failing candidate is blocked. A passing candidate produces a single human approval dialog showing its summary and changed files. Approval changes the personal release pointer for **future** runs; rejection changes nothing. Active runs remain pinned. Manual proposal commands remain available for recovery and externally prepared candidates.
 
 ## Command reference
 
@@ -175,15 +156,15 @@ Run `/playbook <unknown-command>` to display in-Pi usage for every command.
 | `/playbook status` | Show run ID, status, stage, digest, and pending gate. |
 | `/playbook list` | List approved personal/project playbooks, local candidate workspaces, and proposals. |
 | `/playbook approve` | Approve the currently pending workflow gate. |
-| `/playbook close` | Close a run that Pi has submitted for review; optionally start a draft. |
+| `/playbook close` | Close a reviewed run and start automatic evidence-based learning. |
 | `/playbook abort [reason]` | Immediately mark the attached run abandoned. |
 | `/playbook resume <run-id>` | Attach a `running`, `paused`, or `review` run to this session. |
 | `/playbook seal <source-directory>` | Validate and save an immutable playbook snapshot. |
 | `/playbook verify [digest]` | Re-hash a sealed artifact, or verify the attached run's artifact. |
-| `/playbook draft <run-id> [destination]` | Create an editable candidate from a closed run (`completed`, `failed`, or `abandoned`). |
-| `/playbook propose <candidate>` | Seal a local candidate and submit a proposal. Use the directory name printed after `draft` or by `list`; a playbook name also works when only one matching candidate exists. |
-| `/playbook promote <proposal-id\|digest>` | Promote a reviewed proposal, or bootstrap a new name from a sealed digest. |
-| `/playbook reject <proposal-id> [reason]` | Reject a proposal without changing the approved release. |
+| `/playbook draft <run-id> [destination]` | Advanced: manually create an editable candidate from a closed run. |
+| `/playbook propose <candidate>` | Advanced: seal and submit a manually or externally prepared candidate. |
+| `/playbook promote <proposal-id\|digest>` | Advanced: promote a pending proposal, or bootstrap a new name from a sealed digest. |
+| `/playbook reject <proposal-id> [reason]` | Advanced: reject a pending proposal without changing the approved release. |
 | `/playbook rollback <playbook-name>` | Restore the previous personal release for future runs. |
 
 Names must contain lowercase letters, numbers, and single hyphens only—for example, `weekly-review` or `deploy-v2`.
@@ -336,7 +317,7 @@ Activate the first version:
 /playbook run weekly-project-review Review this week's project progress
 ```
 
-Once a name already has an approved release, do not promote a newly sealed digest directly. Run the approved version, create a draft from that run, propose it, and promote the proposal.
+Once a name already has an approved release, do not promote a newly sealed digest directly. Run the approved version and close the reviewed run; automatic learning will evaluate any supported revision and ask for one approval. Use the manual draft/proposal flow only for recovery or externally prepared changes.
 
 ## Playbook contract
 
@@ -361,7 +342,7 @@ Optional fields:
 | `applicability` | `cwdGlobs`, `requiredFiles`, and `forbiddenFiles` used for automatic selection. |
 | `artifacts` | Named output declarations with `path`, optional `stage`, and optional `required` metadata. |
 | `successPredicates` | Deterministic `artifact_exists` or `artifact_nonempty` checks. |
-| `evidencePolicy` | Evidence metadata (`retainArgumentValues`, `promotionLevels`). In 0.0.1, ledger arguments are always stored as hashes and promotion remains manual. |
+| `evidencePolicy` | Evidence metadata (`retainArgumentValues`, `promotionLevels`). Ledger arguments are stored as hashes and every promotion still requires explicit human approval. |
 | `runtime` | Runtime metadata such as `minPiVersion`. In 0.0.1 this is validated as metadata but not used for version enforcement. |
 
 All procedure, skill, artifact, applicability-file, and predicate paths must be relative and cannot contain `..`. Declaring an artifact as `required` documents intent; use a `successPredicate` when success must be mechanically blocked unless that output exists.
@@ -430,7 +411,7 @@ A run can have these statuses:
 running → paused → running → review → completed | failed | abandoned
 ```
 
-`paused` means a workflow gate is pending. `review` means Pi has proposed an outcome, but the run is still active. `completed`, `failed`, and `abandoned` are terminal and can be used as evidence for a draft. `/playbook abort` moves directly to `abandoned`; it does not enter review.
+`paused` means a workflow gate is pending. `review` means Pi has proposed an outcome, but the run is still active. `completed`, `failed`, and `abandoned` are terminal and feed the automatic learning workflow. `/playbook abort` moves directly to `abandoned`; it does not enter review. Manual drafting remains available as an advanced fallback.
 
 ## Automatic and project playbooks
 
@@ -500,7 +481,7 @@ Pi Playbooks does not edit the original workflow directory or installed skill di
 
 The ledger records run and assignment IDs, artifact digests, stages, approvals, policy decisions, result facts, and hashes of tool arguments. It does not store raw tool argument values in version `0.0.1`. Pi's own session transcript remains separate and may contain the original conversation and tool content.
 
-At draft time only, Pi Playbooks can read that Pi-owned trace and extract bash command/outcome evidence from the run's timestamp window. It omits command output and other tool arguments, redacts likely inline credentials, groups repeated commands, and sends at most 50 summaries within a 20,000-character command-text budget to the drafting model. This evidence is not appended to `facts.jsonl`; a candidate records a deterministic command or helper only after the model finds concrete execution support and you still review it before promotion.
+During automatic learning or manual drafting, Pi Playbooks can read that Pi-owned trace and extract bash command/outcome evidence from the run's timestamp window. It omits command output and other tool arguments, redacts likely inline credentials, groups repeated commands, and sends at most 50 summaries within a 20,000-character command-text budget to the drafting model. This evidence is not appended to `facts.jsonl`; a candidate records a deterministic command or helper only after the model finds concrete execution support and you still review it before promotion.
 
 ## Safety model and limitations
 
@@ -538,11 +519,13 @@ Version `0.0.1` implements the local personal workflow:
 - long-lived checkpoints, gates, review, closure, and resume;
 - deterministic output predicates;
 - personal promotion and rollback;
+- automatic evidence-based learning after run closure;
+- deterministic candidate evaluation and one-step human approval;
 - editable candidates with evidence provenance;
-- proposal review, stale-lineage rejection, rejection, and promotion;
+- advanced manual proposal, stale-lineage rejection, rejection, and promotion controls;
 - optional sealed Agent Skill dependencies.
 
-Automatic activation, hosted storage, cryptographic remote distribution, statistical promotion, and full team publishing/trials are intentionally not included.
+Unattended activation, hosted storage, cryptographic remote distribution, statistical promotion, and full team publishing/trials are intentionally not included.
 
 ## Troubleshooting
 

@@ -10,6 +10,7 @@ export interface CandidateMetadata {
   schemaVersion: 1;
   baseDigest: string;
   runId: string;
+  workflow?: "manual" | "automatic";
 }
 
 export interface ProjectCandidate {
@@ -24,11 +25,16 @@ export async function writeCandidateMetadata(sourcePath: string, metadata: Omit<
   await atomicWriteJson(join(sourcePath, CANDIDATE_METADATA_FILE), { schemaVersion: 1, ...metadata });
 }
 
-async function readCandidateMetadata(sourcePath: string): Promise<CandidateMetadata | undefined> {
+export async function readCandidateMetadata(sourcePath: string): Promise<CandidateMetadata | undefined> {
   const path = join(sourcePath, CANDIDATE_METADATA_FILE);
   if (!await exists(path)) return undefined;
   const metadata = await readJson<CandidateMetadata>(path);
-  if (metadata.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(metadata.baseDigest) || !/^[a-f0-9-]{36}$/.test(metadata.runId)) {
+  if (
+    metadata.schemaVersion !== 1 ||
+    !/^[a-f0-9]{64}$/.test(metadata.baseDigest) ||
+    !/^[a-f0-9-]{36}$/.test(metadata.runId) ||
+    (metadata.workflow !== undefined && metadata.workflow !== "manual" && metadata.workflow !== "automatic")
+  ) {
     throw new Error(`invalid ${CANDIDATE_METADATA_FILE}`);
   }
   return metadata;

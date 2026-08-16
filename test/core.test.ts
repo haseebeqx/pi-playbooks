@@ -6,6 +6,7 @@ import test from "node:test";
 import { ArtifactStore } from "../src/artifacts.js";
 import { CANDIDATE_METADATA_FILE, listProjectCandidates, selectProjectCandidate, writeCandidateMetadata } from "../src/candidates.js";
 import { validateContract, isApplicable } from "../src/contract.js";
+import { artifactChanges, evaluateCandidate } from "../src/evaluation.js";
 import { FactLedger } from "../src/ledger.js";
 import { decide } from "../src/policy.js";
 import { assertProposalIsProposed, ProposalStore } from "../src/proposals.js";
@@ -99,6 +100,36 @@ test("artifact verification rejects security-sensitive manifest tampering", asyn
   await assert.rejects(store.contract(sealed.digest), /manifest does not match sealed content/);
 });
 
+test("candidate evaluation verifies identity, evidence state, and material artifact changes", async () => {
+  const { root, source, home } = await fixture();
+  const artifacts = new ArtifactStore(home);
+  const base = await artifacts.seal(source);
+  const runs = new RunStore(home);
+  const run = await runs.create({
+    playbookName: base.contract.name,
+    artifactDigest: base.digest,
+    releaseScope: "personal",
+    cwd: root,
+    sessionId: "session",
+    originalPrompt: "research this",
+    toolAttestations: [],
+  });
+  run.status = "completed";
+  await runs.save(run);
+
+  const candidateDirectory = join(root, "candidate");
+  await artifacts.materializeForRevision(base.digest, candidateDirectory);
+  await writeFile(join(candidateDirectory, "SKILL.md"), "# Improved procedure\n");
+  await writeFile(join(candidateDirectory, "playbook.json"), `${JSON.stringify(contract({ version: "0.1.1" }), null, 2)}\n`);
+  const candidate = await artifacts.seal(candidateDirectory);
+  const evaluation = await evaluateCandidate(artifacts, run, candidate.digest);
+
+  assert.equal(evaluation.passed, true);
+  assert.deepEqual(evaluation.changes, { added: [], modified: ["SKILL.md", "playbook.json"], removed: [] });
+  assert.deepEqual(artifactChanges(base, candidate), evaluation.changes);
+  assert.equal(evaluation.checks.every((check) => check.passed), true);
+});
+
 test("personal registry promotion and rollback preserve lineage", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-playbooks-registry-"));
   const registry = new ReleaseRegistry(join(root, "registry.json"));
@@ -132,12 +163,13 @@ test("project candidate workspaces are discovered with provenance and invalid en
   await mkdir(valid);
   await mkdir(invalid);
   await writeFile(join(valid, "playbook.json"), JSON.stringify(contract({ name: "review-process" })));
-  await writeCandidateMetadata(valid, { baseDigest: "a".repeat(64), runId: "12345678-1234-1234-1234-123456789abc" });
+  await writeCandidateMetadata(valid, { baseDigest: "a".repeat(64), runId: "12345678-1234-1234-1234-123456789abc", workflow: "automatic" });
 
   const candidates = await listProjectCandidates(root);
   assert.deepEqual(candidates.map((candidate) => candidate.directoryName), ["review-process-run123", "unfinished"]);
   assert.equal(candidates[0]?.contract?.name, "review-process");
   assert.equal(candidates[0]?.metadata?.baseDigest, "a".repeat(64));
+  assert.equal(candidates[0]?.metadata?.workflow, "automatic");
   assert.match(candidates[1]?.error ?? "", /missing playbook.json/);
 });
 

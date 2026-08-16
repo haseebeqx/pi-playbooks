@@ -10,6 +10,7 @@ import {
 import { Type } from "typebox";
 import { ArtifactStore } from "../src/artifacts.js";
 import { listProjectCandidates, selectProjectCandidate, writeCandidateMetadata } from "../src/candidates.js";
+import { evaluateCandidate } from "../src/evaluation.js";
 import { FactLedger } from "../src/ledger.js";
 import { ReleaseRegistry, personalRegistryPath } from "../src/registry.js";
 import { assertProposalIsProposed, ProposalStore } from "../src/proposals.js";
@@ -41,20 +42,26 @@ const FinishParameters = Type.Object({
   summary: Type.String(),
 });
 
+const CompleteLearningParameters = Type.Object({
+  runId: Type.String({ description: "Evidence run being analyzed" }),
+  decision: StringEnum(["propose", "no_change"] as const),
+  summary: Type.String({ description: "Concise evidence-based explanation of the decision and candidate changes" }),
+});
+
 const COMMAND_HELP: ReadonlyArray<readonly [name: string, usage: string, description: string]> = [
   ["run", "run <playbook-name> [request]", "Start an approved playbook or local candidate as written, or provide a request to refine it or create an ad hoc workflow."],
   ["status", "status", "Show the active run, current stage, and status."],
   ["list", "list", "List approved playbooks, project candidate workspaces, and submitted proposals."],
   ["approve", "approve", "Approve the workflow gate currently waiting for your decision."],
-  ["close", "close", "Close a reviewed run after you are satisfied and have no more changes."],
+  ["close", "close", "Close a reviewed run and start automatic evidence-based learning."],
   ["resume", "resume <run-id>", "Attach an unfinished or review-ready run to this Pi session."],
   ["abort", "abort [reason]", "Abandon the active run and optionally record why."],
   ["seal", "seal <source-directory>", "Create an immutable playbook artifact from a source directory."],
   ["verify", "verify [digest]", "Verify a sealed artifact, or the active run's artifact."],
-  ["draft", "draft <run-id> [destination]", "Create an editable improvement workspace from a completed run."],
-  ["propose", "propose <candidate>", "Submit a candidate workspace by its directory name (or a unique playbook name) without activating it."],
-  ["promote", "promote <proposal-id|digest>", "Activate a reviewed proposal or bootstrap a sealed playbook."],
-  ["reject", "reject <proposal-id> [reason]", "Reject a candidate proposal without changing the active version."],
+  ["draft", "draft <run-id> [destination]", "Advanced: create an editable improvement workspace from a completed run."],
+  ["propose", "propose <candidate>", "Advanced: submit a manually prepared candidate without activating it."],
+  ["promote", "promote <proposal-id|digest>", "Advanced: activate a reviewed proposal or bootstrap a sealed playbook."],
+  ["reject", "reject <proposal-id> [reason]", "Advanced: reject a candidate proposal without changing the active version."],
   ["rollback", "rollback <playbook-name>", "Return future runs to the preceding approved version."],
 ];
 
@@ -228,7 +235,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     await setActive(activeRun, ctx);
   };
 
-  const closeReviewedRun = async (ctx: ExtensionContext, draftWillStart = false): Promise<PlaybookRun> => {
+  const closeReviewedRun = async (ctx: ExtensionContext): Promise<PlaybookRun> => {
     if (!activeRun || activeRun.status !== "review" || !activeRun.completionReview) {
       throw new Error("No playbook run is ready to close. Complete the work and wait for Pi to submit it for review first.");
     }
@@ -253,43 +260,25 @@ export default function playbooksExtension(pi: ExtensionAPI) {
 
     const theme = ctx.ui.theme;
     const successful = completedRun.status === "completed";
-    const nextSteps = draftWillStart
-      ? [
-          theme.fg("accent", completedRun.releaseScope === "explicit-digest"
-            ? "Preparing a reusable playbook candidate from this run…"
-            : "Preparing an improvement candidate from this run…"),
-          theme.fg("muted", "Pi will ask you to review the candidate before anything is activated."),
-        ]
-      : completedRun.releaseScope === "explicit-digest"
-        ? [
-            theme.fg("accent", "Make this workflow reusable later:"),
-            `  ${theme.fg("success", `/playbook draft ${completedRun.runId}`)}`,
-            theme.fg("muted", "Pi will prepare a candidate for your review, then explain how to approve and run it again."),
-          ]
-        : completedRun.releaseScope === "project-candidate"
-          ? [
-              theme.fg("accent", "Run or improve this local candidate again:"),
-              `  ${theme.fg("success", `/playbook run ${completedRun.playbookName}`)}`,
-              theme.fg("muted", `To derive another candidate from this run: /playbook draft ${completedRun.runId}`),
-            ]
-          : [
-              theme.fg("accent", "Run this approved playbook again:"),
-              `  ${theme.fg("success", `/playbook run ${completedRun.playbookName}`)}`,
-              theme.fg("muted", `To improve it later: /playbook draft ${completedRun.runId}`),
-            ];
     ctx.ui.notify([
       theme.fg(successful ? "success" : "warning", theme.bold(`Playbook run ${completedRun.status}`)),
       `${completedRun.playbookName} · ${completedRun.runId}`,
       review.summary,
       "",
-      ...nextSteps,
+      theme.fg("accent", "Pi will now learn from this run automatically."),
+      theme.fg("muted", "If a safe, material improvement is found, you will only be asked whether to approve it."),
       "",
       theme.fg("muted", "The Pi conversation remains open even though the governed run is closed."),
     ].join("\n"), successful ? "info" : "warning");
     return completedRun;
   };
 
-  const startDraft = async (runId: string, destinationArgument: string | undefined, ctx: ExtensionContext): Promise<void> => {
+  const startDraft = async (
+    runId: string,
+    destinationArgument: string | undefined,
+    ctx: ExtensionContext,
+    workflow: "manual" | "automatic" = "manual",
+  ): Promise<void> => {
     if (activeRun) throw new Error("Finish or detach the active run before starting a learning draft");
     const run = await runs.read(runId);
     if (run.status !== "completed" && run.status !== "failed" && run.status !== "abandoned") {
@@ -301,7 +290,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       ? `/playbook propose ${JSON.stringify(relative(ctx.cwd, destination) || destination)} ${run.artifactDigest} ${run.runId}`
       : `/playbook propose ${defaultDirectoryName}`;
     await artifacts.materializeForRevision(run.artifactDigest, destination);
-    await writeCandidateMetadata(destination, { baseDigest: run.artifactDigest, runId });
+    await writeCandidateMetadata(destination, { baseDigest: run.artifactDigest, runId, workflow });
     const runFacts = (await ledger.readAll()).filter((fact) => fact.runId === runId).slice(-100);
     const commandEvidence = await commandEvidenceFromSession(
       run.sessionFile,
@@ -311,16 +300,22 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     const adHocGuidance = run.releaseScope === "explicit-digest"
       ? "\nThis began as an ad hoc workflow. If the trajectory contains a genuinely reusable procedure, replace the generic instructions with that procedure and refine the contract description while keeping the user-selected playbook name unless they request a rename. Do not invent reusable instructions when the evidence supports only a one-off task. Add skillDependencies only when they materially improve the workflow."
       : "";
+    const completionInstruction = workflow === "automatic"
+      ? `When the analysis is complete, you MUST call playbook_complete_learning exactly once with runId ${runId}. Use decision no_change when the evidence does not support a safe, material procedural improvement. Use decision propose only after editing the candidate. Do not ask the user to manage files, digests, proposals, or commands; the tool performs deterministic evaluation and presents the only required approval.`
+      : `When finished, ask the user to review and run:\n${proposeCommand}`;
     suppressAutomaticOnce = true;
-    pi.sendUserMessage(`Review the completed playbook run ${runId} and propose a minimal procedural improvement.\n\nBase digest: ${run.artifactDigest}\nEditable candidate directory: ${destination}\nOriginal request: ${run.originalPrompt}\nTerminal status: ${run.status}\nCompletion: ${JSON.stringify(run.completion ?? null)}\nEvidence facts (execution-correlated, not causal claims):\n${JSON.stringify(runFacts, null, 2)}\nDeterministic command evidence (minimized from the Pi-owned session trace; command outputs and non-command arguments are omitted):\n${JSON.stringify(commandEvidence, null, 2)}\n\nEdit only the candidate directory, preserve the playbook structure and any declared skill dependencies, increment the source version when materially changed, and do not activate it.${adHocGuidance}\n\nExplicitly evaluate the command evidence for a token- or time-saving deterministic fast path. Add automation only when the observed trajectory supports it:\n1. Prefer a consolidated command when it can replace several observed smaller commands while preserving their checks and failure semantics.\n2. Add a helper under scripts/ only when repeated, stable command sequences justify maintaining one.\nRecord the supporting commands and outcomes in the candidate procedure, plus applicability guards. A successful observed command is evidence that it ran in this trajectory, not proof that it is universally correct. Never invent a command from argument hashes, promote an unexecuted optimization, copy likely credentials, or add a speculative helper. If evidence is insufficient, leave automation out and say so in the review summary.\n\nWhen finished, ask the user to review and run:\n${proposeCommand}`);
+    pi.sendUserMessage(`Review the completed playbook run ${runId} and identify the smallest evidence-supported procedural improvement.\n\nBase digest: ${run.artifactDigest}\nEditable candidate directory: ${destination}\nOriginal request: ${run.originalPrompt}\nTerminal status: ${run.status}\nCompletion: ${JSON.stringify(run.completion ?? null)}\nEvidence facts (execution-correlated, not causal claims):\n${JSON.stringify(runFacts, null, 2)}\nDeterministic command evidence (minimized from the Pi-owned session trace; command outputs and non-command arguments are omitted):\n${JSON.stringify(commandEvidence, null, 2)}\n\nEdit only the candidate directory, preserve the playbook structure and any declared skill dependencies, increment the source version when materially changed, and do not activate it.${adHocGuidance}\n\nExplicitly evaluate the command evidence for a token- or time-saving deterministic fast path. Add automation only when the observed trajectory supports it:\n1. Prefer a consolidated command when it can replace several observed smaller commands while preserving their checks and failure semantics.\n2. Add a helper under scripts/ only when repeated, stable command sequences justify maintaining one.\nRecord the supporting commands and outcomes in the candidate procedure, plus applicability guards. A successful observed command is evidence that it ran in this trajectory, not proof that it is universally correct. Never invent a command from argument hashes, promote an unexecuted optimization, copy likely credentials, or add a speculative helper. If evidence is insufficient, leave automation out.\n\n${completionInstruction}`);
     const theme = ctx.ui.theme;
     ctx.ui.notify([
-      theme.fg("success", theme.bold("Playbook improvement workspace created")),
-      destination,
+      theme.fg("success", theme.bold(workflow === "automatic" ? "Automatic playbook learning started" : "Playbook improvement workspace created")),
+      workflow === "automatic" ? theme.fg("muted", "Pi is analyzing the run; no draft or proposal commands are needed.") : destination,
       "",
-      theme.fg("muted", "Pi is reviewing the completed run and preparing a reusable candidate."),
-      theme.fg("text", "When the review is ready, Pi will give you a /playbook propose command."),
-      theme.fg("muted", "After proposing, you will be able to promote or reject the candidate."),
+      workflow === "automatic"
+        ? theme.fg("text", "You will be asked only if Pi finds an improvement that passes deterministic checks.")
+        : theme.fg("text", "When the review is ready, Pi will give you a /playbook propose command."),
+      workflow === "automatic"
+        ? theme.fg("muted", "The approved playbook remains unchanged until you approve the candidate.")
+        : theme.fg("muted", "After proposing, you will be able to promote or reject the candidate."),
     ].join("\n"), "info");
   };
 
@@ -505,6 +500,163 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       }
     }
     await appendFact(ctx, { type: "AUTHORIZED", toolName: "user_bash", argsHash, enforcementLevel: "observed", policyVersion: POLICY_VERSION, reason: decision.reason });
+  });
+
+  pi.registerTool({
+    name: "playbook_complete_learning",
+    label: "Complete playbook learning",
+    description: "Complete automatic learning for a closed playbook run. Either record that no material change is supported, or seal, evaluate, and present an evidence-linked candidate for one-step user approval.",
+    promptSnippet: "Finalize automatic playbook learning without exposing draft, proposal, or digest mechanics",
+    promptGuidelines: ["Use playbook_complete_learning exactly once when an automatic playbook-learning review instructs you to complete it."],
+    parameters: CompleteLearningParameters,
+    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+      const run = await runs.read(params.runId);
+      if (run.status !== "completed" && run.status !== "failed" && run.status !== "abandoned") {
+        throw new Error("Automatic learning requires a closed evidence run");
+      }
+      const candidateRoot = join(run.cwd, CONFIG_DIR_NAME, "playbooks", "candidates");
+      const matches = (await listProjectCandidates(candidateRoot)).filter((candidate) =>
+        candidate.metadata?.runId === run.runId && candidate.metadata.workflow === "automatic",
+      );
+      if (matches.length !== 1 || !matches[0]?.contract) {
+        throw new Error("Automatic learning workspace is missing or ambiguous");
+      }
+      const candidate = matches[0];
+      if (candidate.metadata?.baseDigest !== run.artifactDigest) {
+        throw new Error("Automatic learning workspace does not match the evidence run base");
+      }
+
+      if (params.decision === "no_change") {
+        await ledger.append({
+          type: "LEARNING_NO_CHANGE",
+          runId: run.runId,
+          assignmentId: run.assignmentId,
+          artifactDigest: run.artifactDigest,
+          toolCallId,
+          toolName: "playbook_complete_learning",
+          enforcementLevel: "guarded",
+          reason: params.summary,
+        });
+        await rm(candidate.sourcePath, { recursive: true, force: true });
+        return {
+          content: [{ type: "text", text: "Automatic learning completed: the evidence did not support a safe, material playbook change. The temporary workspace was removed." }],
+          details: { runId: run.runId, decision: "no_change" },
+        };
+      }
+
+      const manifest = await artifacts.seal(candidate.sourcePath);
+      const evaluation = await evaluateCandidate(artifacts, run, manifest.digest);
+      const baseContract = await artifacts.contract(run.artifactDigest);
+      const team = teamRegistryFor(ctx);
+      const current = await personal.resolve(manifest.contract.name) ?? await team?.resolve(manifest.contract.name);
+      const unpublishedBase = !current && (run.releaseScope === "explicit-digest" || run.releaseScope === "project-candidate");
+      const lineageCurrent = current?.digest === run.artifactDigest || unpublishedBase;
+      const facts = (await ledger.readAll()).filter((fact) => fact.runId === run.runId);
+      const existingProposal = (await proposals.list()).find((item) =>
+        item.candidateDigest === manifest.digest && item.evidenceRunIds.includes(run.runId),
+      );
+      if (existingProposal?.status === "promoted") {
+        return {
+          content: [{ type: "text", text: `This learned update to ${manifest.contract.name} was already approved for future runs.` }],
+          details: { runId: run.runId, proposalId: existingProposal.proposalId, decision: "already_promoted", digest: manifest.digest },
+        };
+      }
+      if (existingProposal?.status === "rejected" || existingProposal?.status === "stale") {
+        throw new Error(`This automatic candidate was already ${existingProposal.status}; create new evidence before reconsidering it`);
+      }
+      const proposal = existingProposal ?? await proposals.create({
+        name: manifest.contract.name,
+        candidateDigest: manifest.digest,
+        baseDigest: run.artifactDigest,
+        evidenceRunIds: [run.runId],
+        ...(facts.at(-1) ? { evidenceWatermark: facts.at(-1)!.factId } : {}),
+        rationale: params.summary,
+      });
+
+      if (!lineageCurrent || !evaluation.passed) {
+        proposal.status = lineageCurrent ? "rejected" : "stale";
+        await proposals.save(proposal);
+        await ledger.append({
+          type: lineageCurrent ? "CANDIDATE_EVALUATION_FAILED" : "CANDIDATE_STALE",
+          runId: run.runId,
+          assignmentId: run.assignmentId,
+          artifactDigest: manifest.digest,
+          reason: lineageCurrent
+            ? evaluation.checks.filter((check) => !check.passed).map((check) => check.reason).join("; ")
+            : "approved release changed before automatic proposal submission",
+          data: { proposalId: proposal.proposalId, checks: evaluation.checks, changes: evaluation.changes },
+        });
+        throw new Error(lineageCurrent
+          ? `Candidate did not pass deterministic evaluation: ${evaluation.checks.filter((check) => !check.passed).map((check) => check.reason).join("; ")}`
+          : "Candidate became stale before evaluation; the approved playbook was not changed");
+      }
+
+      await ledger.append({
+        type: "CANDIDATE_EVALUATION_PASSED",
+        runId: run.runId,
+        assignmentId: run.assignmentId,
+        artifactDigest: manifest.digest,
+        reason: params.summary,
+        data: { proposalId: proposal.proposalId, checks: evaluation.checks, changes: evaluation.changes },
+      });
+
+      const changed = [
+        ...evaluation.changes.added.map((path) => `+ ${path}`),
+        ...evaluation.changes.modified.map((path) => `~ ${path}`),
+        ...evaluation.changes.removed.map((path) => `- ${path}`),
+      ];
+      if (!ctx.hasUI) {
+        return {
+          content: [{ type: "text", text: `Candidate ${proposal.proposalId} passed deterministic evaluation and awaits human approval. In an interactive session, review it with /playbook list and promote or reject it.` }],
+          details: { runId: run.runId, proposalId: proposal.proposalId, decision: "awaiting_approval", evaluation },
+        };
+      }
+
+      const approved = await ctx.ui.confirm(
+        `Approve learned update to ${proposal.name}?`,
+        `${params.summary}\n\nSource version: ${baseContract.version} → ${manifest.contract.version}\nVerified changes:\n${changed.map((line) => `  ${line}`).join("\n")}\n\nThe candidate passed ${evaluation.checks.length} deterministic checks. Approval affects future runs only; the evidence run remains pinned to its original version.`,
+      );
+      if (!approved) {
+        proposal.status = "rejected";
+        await proposals.save(proposal);
+        await ledger.append({
+          type: "CANDIDATE_REJECTED",
+          runId: run.runId,
+          assignmentId: run.assignmentId,
+          artifactDigest: manifest.digest,
+          reason: "user declined automatic promotion",
+          data: { proposalId: proposal.proposalId, fingerprint: proposal.fingerprint },
+        });
+        return {
+          content: [{ type: "text", text: "The user declined the learned update. The approved playbook remains unchanged." }],
+          details: { runId: run.runId, proposalId: proposal.proposalId, decision: "rejected" },
+        };
+      }
+
+      await artifacts.verify(manifest.digest);
+      const latest = await personal.resolve(manifest.contract.name) ?? await team?.resolve(manifest.contract.name);
+      const latestLineageCurrent = latest?.digest === run.artifactDigest || (!latest && unpublishedBase);
+      if (!latestLineageCurrent) {
+        proposal.status = "stale";
+        await proposals.save(proposal);
+        throw new Error("The approved release changed during review; promotion was blocked as stale");
+      }
+      await personal.promote(manifest.contract.name, manifest.digest);
+      proposal.status = "promoted";
+      await proposals.save(proposal);
+      await ledger.append({
+        type: "PROMOTED",
+        runId: run.runId,
+        assignmentId: run.assignmentId,
+        artifactDigest: manifest.digest,
+        reason: `human-approved automatic personal promotion of ${manifest.contract.name}`,
+        data: { proposalId: proposal.proposalId, baseDigest: run.artifactDigest },
+      });
+      return {
+        content: [{ type: "text", text: `The learned update to ${manifest.contract.name} was approved and will be used for future runs. No draft, proposal, or promotion command is needed.` }],
+        details: { runId: run.runId, proposalId: proposal.proposalId, decision: "promoted", digest: manifest.digest, evaluation },
+      };
+    },
   });
 
   pi.registerTool({
@@ -864,18 +1016,8 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           if (!activeRun || activeRun.status !== "review" || !activeRun.completionReview) {
             throw new Error("No playbook run is ready to close. Complete the work and wait for Pi to submit it for review first.");
           }
-          const shouldDraft = ctx.hasUI
-            ? await ctx.ui.confirm(
-                activeRun.releaseScope === "explicit-digest" ? "Save this workflow for reuse?" : "Draft an improvement?",
-                activeRun.releaseScope === "explicit-digest"
-                  ? "Pi can create an editable playbook candidate from this run. Nothing will be activated until you review and promote it."
-                  : activeRun.releaseScope === "project-candidate"
-                    ? "Pi can derive another editable candidate from the immutable snapshot used by this run. Nothing will be activated until you review and promote it."
-                    : "Pi can create an editable improvement candidate based on this run. The approved playbook will remain unchanged until you review and promote it.",
-              )
-            : false;
-          const completedRun = await closeReviewedRun(ctx, shouldDraft);
-          if (shouldDraft) await startDraft(completedRun.runId, undefined, ctx);
+          const completedRun = await closeReviewedRun(ctx);
+          await startDraft(completedRun.runId, undefined, ctx, "automatic");
           return;
         }
         if (command === "resume") {
