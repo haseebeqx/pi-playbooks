@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
@@ -10,7 +10,8 @@ import {
 import { Type } from "typebox";
 import { ArtifactStore } from "../src/artifacts.js";
 import { listProjectCandidates, selectProjectCandidate, writeCandidateMetadata } from "../src/candidates.js";
-import { evaluateCandidate } from "../src/evaluation.js";
+import { artifactChanges, evaluateCandidate } from "../src/evaluation.js";
+import { appendAdditionalInstruction, nextSourceVersion } from "../src/instructions.js";
 import { FactLedger } from "../src/ledger.js";
 import { ReleaseRegistry, personalRegistryPath } from "../src/registry.js";
 import { assertProposalIsProposed, ProposalStore } from "../src/proposals.js";
@@ -53,6 +54,8 @@ const COMMAND_HELP: ReadonlyArray<readonly [name: string, usage: string, descrip
   ["record", "record [playbook-name]", "Convert the current session so far into a reusable playbook."],
   ["status", "status", "Show the active run, current stage, and status."],
   ["list", "list", "List approved playbooks, project candidate workspaces, and submitted proposals."],
+  ["edit", "edit <playbook-name> [destination]", "Create an editable candidate from the currently approved release."],
+  ["instruct", "instruct <playbook-name> <instruction>", "Add a persistent instruction and request approval for future runs."],
   ["approve", "approve", "Approve the workflow gate currently waiting for your decision."],
   ["close", "close", "Close a reviewed run and start automatic evidence-based learning."],
   ["resume", "resume <run-id>", "Attach an unfinished or review-ready run to this Pi session."],
@@ -328,7 +331,12 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     const taskIntroduction = learningPurpose === "record-session"
       ? `Convert the current Pi session so far into a concise, reusable playbook. Use the prior conversation as evidence and create the smallest workflow that can reliably reproduce its successful process.`
       : `Review the completed playbook run ${runId} and identify the smallest evidence-supported procedural improvement.`;
-    pi.sendUserMessage(`${taskIntroduction}\n\nBase digest: ${run.artifactDigest}\nEditable candidate directory: ${destination}\nOriginal request: ${run.originalPrompt}\nTerminal status: ${run.status}\nCompletion: ${JSON.stringify(run.completion ?? null)}\nEvidence facts (execution-correlated, not causal claims):\n${JSON.stringify(runFacts, null, 2)}\nDeterministic command evidence (minimized from the Pi-owned session trace; command outputs and non-command arguments are omitted):\n${JSON.stringify(commandEvidence, null, 2)}\n\nEdit only the candidate directory, preserve the playbook structure and any declared skill dependencies, increment the source version when materially changed, and do not activate it.${adHocGuidance}\n\nExplicitly evaluate the command evidence for a token- or time-saving deterministic fast path. Add automation only when the observed trajectory supports it:\n1. Prefer a consolidated command when it can replace several observed smaller commands while preserving their checks and failure semantics.\n2. Add a helper under scripts/ only when repeated, stable command sequences justify maintaining one.\nRecord the supporting commands and outcomes in the candidate procedure, plus applicability guards. A successful observed command is evidence that it ran in this trajectory, not proof that it is universally correct. Never invent a command from argument hashes, promote an unexecuted optimization, copy likely credentials, or add a speculative helper. If evidence is insufficient, leave automation out.\n\n${completionInstruction}`);
+    const learningTask = `${taskIntroduction}\n\nBase digest: ${run.artifactDigest}\nEditable candidate directory: ${destination}\nOriginal request: ${run.originalPrompt}\nTerminal status: ${run.status}\nCompletion: ${JSON.stringify(run.completion ?? null)}\nEvidence facts (execution-correlated, not causal claims):\n${JSON.stringify(runFacts, null, 2)}\nDeterministic command evidence (minimized from the Pi-owned session trace; command outputs and non-command arguments are omitted):\n${JSON.stringify(commandEvidence, null, 2)}\n\nEdit only the candidate directory, preserve the playbook structure and any declared skill dependencies, increment the source version when materially changed, and do not activate it.${adHocGuidance}\n\nExplicitly evaluate the command evidence for a token- or time-saving deterministic fast path. Add automation only when the observed trajectory supports it:\n1. Prefer a consolidated command when it can replace several observed smaller commands while preserving their checks and failure semantics.\n2. Add a helper under scripts/ only when repeated, stable command sequences justify maintaining one.\nRecord the supporting commands and outcomes in the candidate procedure, plus applicability guards. A successful observed command is evidence that it ran in this trajectory, not proof that it is universally correct. Never invent a command from argument hashes, promote an unexecuted optimization, copy likely credentials, or add a speculative helper. If evidence is insufficient, leave automation out.\n\n${completionInstruction}`;
+    pi.sendMessage({
+      customType: "playbook-learning-task",
+      content: learningTask,
+      display: false,
+    }, { triggerTurn: true });
     const theme = ctx.ui.theme;
     ctx.ui.notify([
       theme.fg("success", theme.bold(learningPurpose === "record-session" ? "Recording this session as a playbook" : workflow === "automatic" ? "Automatic playbook learning started" : "Playbook improvement workspace created")),
@@ -341,6 +349,138 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         ? theme.fg("muted", "The approved playbook remains unchanged until you approve the candidate.")
         : theme.fg("muted", "After proposing, you will be able to promote or reject the candidate."),
     ].join("\n"), "info");
+  };
+
+  const createEditWorkspace = async (
+    name: string,
+    destinationArgument: string | undefined,
+    ctx: ExtensionContext,
+  ): Promise<void> => {
+    const release = await resolveNamed(name, artifacts, personal, teamRegistryFor(ctx));
+    if (!release) throw new Error(`No approved playbook named ${name}`);
+
+    const defaultDirectoryName = `${name}-edit`;
+    const destination = resolve(
+      ctx.cwd,
+      destinationArgument ?? join(CONFIG_DIR_NAME, "playbooks", "candidates", defaultDirectoryName),
+    );
+    await artifacts.materializeForRevision(release.digest, destination);
+    const manifest = await artifacts.manifest(release.digest);
+    const updatedContract = {
+      ...manifest.contract,
+      version: nextSourceVersion(manifest.contract.version),
+    };
+    await writeFile(join(destination, "playbook.json"), `${JSON.stringify(updatedContract, null, 2)}\n`, "utf8");
+
+    const candidateRoot = resolve(ctx.cwd, CONFIG_DIR_NAME, "playbooks", "candidates");
+    const relativeCandidate = relative(candidateRoot, destination);
+    const isDiscoverable = relativeCandidate !== "" && !relativeCandidate.startsWith("..") && !relativeCandidate.includes("/") && !relativeCandidate.includes("\\");
+    const proposeCommand = isDiscoverable
+      ? `/playbook propose ${JSON.stringify(relativeCandidate)}`
+      : `/playbook propose ${JSON.stringify(relative(ctx.cwd, destination) || destination)} ${release.digest} none edited-approved-playbook`;
+    const theme = ctx.ui.theme;
+    ctx.ui.notify([
+      theme.fg("success", theme.bold(`Editable candidate created for ${name}`)),
+      destination,
+      `Procedure: ${join(destination, manifest.procedurePath)}`,
+      theme.fg("muted", `Source version prepared as ${updatedContract.version}; the approved release is unchanged.`),
+      "",
+      theme.fg("text", "Edit the candidate, then submit it for approval with:"),
+      `  ${theme.fg("success", proposeCommand)}`,
+    ].join("\n"), "info");
+  };
+
+  const addPersistentInstruction = async (
+    name: string,
+    instruction: string,
+    ctx: ExtensionContext,
+  ): Promise<void> => {
+    const release = await resolveNamed(name, artifacts, personal, teamRegistryFor(ctx));
+    if (!release) throw new Error(`No approved playbook named ${name}`);
+    const normalizedInstruction = instruction.replace(/\s+/g, " ").trim();
+    if (!normalizedInstruction) throw new Error("Usage: /playbook instruct <playbook-name> <instruction>");
+
+    await mkdir(home, { recursive: true });
+    const temporaryRoot = await mkdtemp(join(home, ".instruction-source-"));
+    const source = join(temporaryRoot, "candidate");
+    try {
+      await artifacts.materializeForRevision(release.digest, source);
+      const base = await artifacts.manifest(release.digest);
+      const procedurePath = join(source, base.procedurePath);
+      const procedure = await readFile(procedurePath, "utf8");
+      await writeFile(procedurePath, appendAdditionalInstruction(procedure, normalizedInstruction), "utf8");
+      const updatedContract = {
+        ...base.contract,
+        version: nextSourceVersion(base.contract.version),
+      };
+      await writeFile(join(source, "playbook.json"), `${JSON.stringify(updatedContract, null, 2)}\n`, "utf8");
+
+      const candidate = await artifacts.seal(source);
+      const changes = artifactChanges(base, candidate);
+      const proposal = await proposals.create({
+        name,
+        candidateDigest: candidate.digest,
+        baseDigest: release.digest,
+        evidenceRunIds: [],
+        rationale: `Add persistent instruction: ${normalizedInstruction}`,
+      });
+      await ledger.append({
+        type: "CANDIDATE_PROPOSED",
+        artifactDigest: candidate.digest,
+        reason: proposal.rationale,
+        data: { proposalId: proposal.proposalId, baseDigest: release.digest, evidenceRunIds: [], source: "playbook-instruct" },
+      });
+
+      const theme = ctx.ui.theme;
+      if (!ctx.hasUI) {
+        ctx.ui.notify([
+          theme.fg("success", theme.bold(`Instruction candidate ready for ${name}`)),
+          `Proposal ID: ${proposal.proposalId}`,
+          `Changed files: ${[...changes.added, ...changes.modified, ...changes.removed].join(", ")}`,
+          `Approve with: /playbook promote ${proposal.proposalId}`,
+        ].join("\n"), "info");
+        return;
+      }
+
+      const approved = await ctx.ui.confirm(
+        `Add this instruction to ${name}?`,
+        `${normalizedInstruction}\n\nVersion ${base.contract.version} → ${updatedContract.version}\nChanged files: ${[...changes.added, ...changes.modified, ...changes.removed].join(", ")}\n\nApproval applies to future runs. Active runs remain pinned.`,
+      );
+      if (!approved) {
+        proposal.status = "rejected";
+        await proposals.save(proposal);
+        await ledger.append({
+          type: "CANDIDATE_REJECTED",
+          artifactDigest: candidate.digest,
+          reason: "persistent instruction was not approved",
+          data: { proposalId: proposal.proposalId, fingerprint: proposal.fingerprint },
+        });
+        ctx.ui.notify(`Instruction was not added to ${name}`, "warning");
+        return;
+      }
+
+      const current = await resolveNamed(name, artifacts, personal, teamRegistryFor(ctx));
+      if (!current || current.digest !== release.digest) {
+        proposal.status = "stale";
+        await proposals.save(proposal);
+        throw new Error(`The approved ${name} release changed while approval was pending; run the instruct command again`);
+      }
+      await personal.promote(name, candidate.digest);
+      proposal.status = "promoted";
+      await proposals.save(proposal);
+      await ledger.append({
+        type: "PROMOTED",
+        artifactDigest: candidate.digest,
+        reason: `approved persistent instruction for ${name}`,
+        data: { proposalId: proposal.proposalId },
+      });
+      ctx.ui.notify([
+        theme.fg("success", theme.bold(`Instruction added to ${name}`)),
+        theme.fg("muted", `Version ${updatedContract.version} will be used by future runs; active runs remain pinned.`),
+      ].join("\n"), "info");
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
   };
 
   pi.on("session_start", async (_event, ctx) => {
@@ -934,6 +1074,18 @@ export default function playbooksExtension(pi: ExtensionAPI) {
             `  ${theme.fg("success", `/playbook promote ${manifest.digest}`)}`,
             theme.fg("muted", "Updates to an approved playbook must go through the proposal review flow."),
           ].join("\n"), "info");
+          return;
+        }
+        if (command === "edit") {
+          const name = words.shift();
+          if (!name || words.length > 1) throw new Error("Usage: /playbook edit <playbook-name> [destination]");
+          await createEditWorkspace(name, words[0], ctx);
+          return;
+        }
+        if (command === "instruct") {
+          const name = words.shift();
+          if (!name || words.length === 0) throw new Error("Usage: /playbook instruct <playbook-name> <instruction>");
+          await addPersistentInstruction(name, words.join(" "), ctx);
           return;
         }
         if (command === "draft") {

@@ -7,6 +7,7 @@ import { ArtifactStore } from "../src/artifacts.js";
 import { CANDIDATE_METADATA_FILE, listProjectCandidates, selectProjectCandidate, writeCandidateMetadata } from "../src/candidates.js";
 import { validateContract, isApplicable } from "../src/contract.js";
 import { artifactChanges, evaluateCandidate } from "../src/evaluation.js";
+import { appendAdditionalInstruction, nextSourceVersion } from "../src/instructions.js";
 import { FactLedger } from "../src/ledger.js";
 import { decide } from "../src/policy.js";
 import { assertProposalIsProposed, ProposalStore } from "../src/proposals.js";
@@ -39,6 +40,19 @@ async function fixture() {
   await chmod(join(source, "scripts", "validate.sh"), 0o755);
   return { root, source, home: join(root, "home") };
 }
+
+test("persistent instructions append to the procedure and advance source versions", () => {
+  assert.equal(nextSourceVersion("0.1.9"), "0.1.10");
+  assert.equal(nextSourceVersion("release"), "release.1");
+  assert.equal(
+    appendAdditionalInstruction("# Procedure\n\n1. Inspect.\n", "Always verify generated files."),
+    "# Procedure\n\n1. Inspect.\n\n## Additional instructions\n\n- Always verify generated files.\n",
+  );
+  assert.equal(
+    appendAdditionalInstruction("# Procedure\n\n## Additional instructions\n\n- First.\n\n## Finish\n\nDone.\n", "Second."),
+    "# Procedure\n\n## Additional instructions\n\n- First.\n\n- Second.\n\n## Finish\n\nDone.\n",
+  );
+});
 
 test("contract validation rejects path traversal and ambiguous values", () => {
   assert.throws(() => validateContract(contract({ artifacts: [{ name: "x", path: "../secret" }] })), /inside the run directory/);

@@ -151,6 +151,30 @@ For an ad hoc run, the same automatic learning flow extracts a reusable procedur
 
 The lower-level `draft`, `propose`, `promote`, and `reject` commands remain available as advanced recovery and externally prepared-candidate controls; they are not the normal user journey.
 
+### Update an approved playbook directly
+
+Add one persistent instruction with a single approval step:
+
+```text
+/playbook instruct release-check "Always verify generated files before finishing"
+```
+
+Pi copies the approved release into an isolated workspace, appends the instruction to its procedure, advances the source version, seals a proposal, and shows the changed files. In an interactive session, approval immediately makes the revision available to future runs. Rejection leaves the approved release unchanged. Any active run remains pinned to its original version.
+
+For broader changes, create an editable candidate:
+
+```text
+/playbook edit release-check
+```
+
+This writes `.pi/playbooks/candidates/release-check-edit/`, advances its source version, and displays the command to submit it for approval after editing. An optional destination may be supplied. Existing approved artifacts are never edited in place.
+
+For a one-run refinement that should not persist, continue using:
+
+```text
+/playbook run release-check "Also verify the changelog"
+```
+
 ## How the lifecycle works
 
 ### 1. Seal
@@ -192,6 +216,8 @@ Run `/playbook <unknown-command>` to display in-Pi usage for every command.
 | `/playbook record [name]` | Convert the current session so far into a reusable playbook. Requires an interactive whole-session privacy warning and explicit confirmation before extraction. |
 | `/playbook status` | Show run ID, status, stage, digest, and pending gate. |
 | `/playbook list` | List approved personal/project playbooks, local candidate workspaces, and proposals. |
+| `/playbook edit <name> [destination]` | Create an editable candidate from the approved release and prepare its next source version. |
+| `/playbook instruct <name> <instruction>` | Add a persistent instruction and request approval for future runs. |
 | `/playbook approve` | Approve the currently pending workflow gate. |
 | `/playbook close` | Close a reviewed run and start automatic evidence-based learning. |
 | `/playbook abort [reason]` | Immediately mark the attached run abandoned. |
@@ -354,7 +380,7 @@ Activate the first version:
 /playbook run weekly-project-review Review this week's project progress
 ```
 
-Once a name already has an approved release, do not promote a newly sealed digest directly. Run the approved version and close the reviewed run; automatic learning will evaluate any supported revision and ask for one approval. Use the manual draft/proposal flow only for recovery or externally prepared changes.
+Once a name already has an approved release, do not promote a newly sealed digest directly. Use `/playbook instruct <name> <instruction>` for a focused persistent instruction, `/playbook edit <name>` for broader manual changes, or run and close the approved version so automatic learning can evaluate evidence-supported improvements.
 
 ## Playbook contract
 
@@ -569,7 +595,7 @@ Unattended activation, hosted storage, cryptographic remote distribution, statis
 - **`Required tool is unavailable`** — add the tool to Pi or remove it from `requiredCapabilities` if the procedure does not need it.
 - **`<effect> is not declared by the playbook`** — add the narrow effect class required by the tool; do not default to `*` without reviewing the workflow.
 - **`Success predicates failed`** — create or repair the declared output, then call `playbook_finish` again.
-- **`Revision directory already exists`** — choose a different destination: `/playbook draft <run-id> <new-directory>`.
+- **`Revision directory already exists`** — choose a different destination with `/playbook edit <name> <new-directory>` or `/playbook draft <run-id> <new-directory>`.
 - **`Multiple local candidates are named ...`** — choose one of the candidate directory names included in the error. `/playbook list` also prints an unambiguous `propose` command for every workspace.
 - **`Proposal base is stale`** — the approved version changed after the draft was created; create or rebase a candidate from the current release.
 - **No project candidates are listed** — trust the project and confirm they are under `.pi/playbooks/candidates/`.
