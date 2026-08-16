@@ -996,7 +996,24 @@ export default function playbooksExtension(pi: ExtensionAPI) {
             ?? await projectCandidateRelease(name, ctx);
           if (!release) {
             if (!prompt) {
-              throw new Error(`No approved playbook or local candidate named ${name}. Provide a request to create an ad hoc workflow: /playbook run ${name} <request>`);
+              if (!ctx.hasUI) {
+                throw new Error(`No approved playbook or local candidate named ${name}. Provide a request to create an ad hoc workflow: /playbook run ${name} <request>`);
+              }
+              const theme = ctx.ui.theme;
+              ctx.ui.notify([
+                theme.fg("accent", theme.bold(`No saved playbook named ${name}`)),
+                "Pi Playbooks can turn this run into a reproducible workflow.",
+                "When you run it again, Pi can improve the workflow based on your new instructions and evidence from prior runs.",
+                theme.fg("muted", `Keep giving Pi instructions and feedback normally. Once the work is ready for review and you are done, close the playbook with ${theme.fg("success", "/playbook close")}.`),
+                "",
+                theme.fg("text", "Start by telling Pi what you want it to do."),
+              ].join("\n"), "info");
+              const entered = await ctx.ui.input(
+                "What should Pi do?",
+                "Give Pi your instructions for this workflow",
+              );
+              if (!entered?.trim()) return;
+              prompt = entered.trim();
             }
             release = await adHocRelease(name);
           } else if (!prompt) {

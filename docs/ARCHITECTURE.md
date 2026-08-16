@@ -9,7 +9,7 @@ Implemented in `0.0.1`:
 - fixed artifact assignment for a long-lived playbook run;
 - approved named playbooks started as self-contained workflows with `/playbook run <name>`, with an optional request to refine their scope;
 - trusted project candidates resolved by contract or directory name, sealed into immutable snapshots, and run without promotion or an additional request;
-- ad hoc governed runs created interactively with `/playbook` or explicitly with `/playbook run <name> <request>`, without a pre-existing procedure or skill;
+- ad hoc governed runs created interactively with `/playbook` or `/playbook run <name>`, which prompts for a missing request, or explicitly with `/playbook run <name> <request>`, without a pre-existing procedure or skill;
 - a mandatory user-selected name collected before assignment, with no hidden or temporary playbook records;
 - personal-over-team deterministic resolution;
 - no implicit applicability conflict winner;

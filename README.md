@@ -93,7 +93,7 @@ If `release-check` is already approved, that version is used. An approved playbo
 /playbook run release-check
 ```
 
-An optional request can refine the run. A matching local candidate under `.pi/playbooks/candidates/` also runs without a request: Pi seals its current contents and pins the run to that immutable snapshot without promoting it. If neither an approved release nor a local candidate matches the name, a request is required and Pi creates a protected ad hoc workflow under that name. An ad hoc workflow is governed and recorded, but is **not** automatically reusable or approved.
+An optional request can refine the run. A matching local candidate under `.pi/playbooks/candidates/` also runs without a request: Pi seals its current contents and pins the run to that immutable snapshot without promoting it. If neither an approved release nor a local candidate matches the name, Pi explains that the run can become a reproducible workflow, then asks what you want it to do in interactive modes (or requires the request inline in non-interactive modes). It creates a protected ad hoc workflow under that name, and you can continue giving instructions and feedback until you review and close the run. An ad hoc workflow is governed and recorded, but is **not** automatically reusable or approved.
 
 Only one playbook run can be attached to a Pi session at a time. `/playbook` shows the current run instead of starting another when one is active.
 
@@ -152,7 +152,7 @@ Run `/playbook <unknown-command>` to display in-Pi usage for every command.
 | Command | Purpose |
 |---|---|
 | `/playbook` | Start interactively, or show the attached run. |
-| `/playbook run <name> [request]` | Run an approved playbook or local project candidate as written, optionally refining it with a request. Unknown names require a request and create a named ad hoc run. |
+| `/playbook run <name> [request]` | Run an approved playbook or local project candidate as written, optionally refining it with a request. For an unknown name, Pi explains how the run can become a reproducible, improving workflow, asks for the first instructions interactively, and creates a named ad hoc run. |
 | `/playbook status` | Show run ID, status, stage, digest, and pending gate. |
 | `/playbook list` | List approved personal/project playbooks, local candidate workspaces, and proposals. |
 | `/playbook approve` | Approve the currently pending workflow gate. |
