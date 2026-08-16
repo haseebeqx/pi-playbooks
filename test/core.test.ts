@@ -3,6 +3,8 @@ import { chmod, mkdtemp, mkdir, readFile, symlink, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import playbooksExtension from "../extensions/playbooks.js";
 import { ArtifactStore } from "../src/artifacts.js";
 import { CANDIDATE_METADATA_FILE, listProjectCandidates, selectProjectCandidate, writeCandidateMetadata } from "../src/candidates.js";
 import { validateContract, isApplicable } from "../src/contract.js";
@@ -29,6 +31,21 @@ function contract(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+test("extension loading only uses registration methods", () => {
+  const registrations = { events: 0, tools: 0, commands: 0 };
+  const loadingApi = {
+    on: () => { registrations.events += 1; },
+    registerTool: () => { registrations.tools += 1; },
+    registerCommand: () => { registrations.commands += 1; },
+    getActiveTools: () => { throw new Error("action method called during extension loading"); },
+    getAllTools: () => { throw new Error("action method called during extension loading"); },
+    setActiveTools: () => { throw new Error("action method called during extension loading"); },
+  } as unknown as ExtensionAPI;
+
+  assert.doesNotThrow(() => playbooksExtension(loadingApi));
+  assert.deepEqual(registrations, { events: 8, tools: 3, commands: 1 });
+});
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "pi-playbooks-"));

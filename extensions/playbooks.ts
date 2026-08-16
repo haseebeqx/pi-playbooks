@@ -1520,7 +1520,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     },
   });
 
-  // Custom tools are active by default when registered. Start from a neutral
-  // state; session_start will re-enable the right pair if it restores a run.
-  syncGovernedTools();
+  // Custom tools are active by default when registered. session_start runs
+  // after the extension runtime is bound and selects the appropriate governed
+  // tools for either a restored run or the neutral state.
 }
