@@ -1,10 +1,13 @@
 {
-  "name": "pi-playbooks",
+  "name": "@haseebeqx/pi-playbooks",
   "version": "0.0.1",
   "description": "Governed, self-improving playbook runtime for Pi",
   "type": "module",
   "license": "MIT",
   "author": "Haseeb",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/haseebeqx/pi-playbooks.git"

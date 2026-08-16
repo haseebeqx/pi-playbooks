@@ -50,7 +50,7 @@ pi install git:github.com/haseebeqx/pi-playbooks
 When the package is available from npm:
 
 ```sh
-pi install npm:pi-playbooks@0.0.1
+pi install npm:@haseebeqx/pi-playbooks@0.0.1
 ```
 
 Restart Pi after installation if it is already running. For a one-off local test without installing, run this from the repository root:
@@ -64,7 +64,7 @@ Useful Pi package commands:
 ```sh
 pi list
 pi update --extensions
-pi remove npm:pi-playbooks
+pi remove npm:@haseebeqx/pi-playbooks
 ```
 
 Local and Git source identifiers should be passed to `remove` in the same form in which they were installed.
