@@ -1,6 +1,10 @@
 # Pi Runbooks
 
-[![npm](https://img.shields.io/npm/v/%40haseebeqx%2Fpi-runbooks)](https://www.npmjs.com/package/@haseebeqx/pi-runbooks)
+[![npm version](https://img.shields.io/npm/v/%40haseebeqx%2Fpi-runbooks)](https://www.npmjs.com/package/@haseebeqx/pi-runbooks)
+[![npm downloads](https://img.shields.io/npm/dm/%40haseebeqx%2Fpi-runbooks)](https://www.npmjs.com/package/@haseebeqx/pi-runbooks)
+[![Node.js](https://img.shields.io/node/v/%40haseebeqx%2Fpi-runbooks)](package.json)
+[![License](https://img.shields.io/npm/l/%40haseebeqx%2Fpi-runbooks)](LICENSE)
+[![Publish to npm](https://github.com/haseebeqx/pi-runbooks/actions/workflows/publish.yml/badge.svg)](https://github.com/haseebeqx/pi-runbooks/actions/workflows/publish.yml)
 
 A [Pi](https://pi.dev) extension for turning repeatable work into versioned, governed workflows.
 
