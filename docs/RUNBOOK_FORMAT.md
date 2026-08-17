@@ -1,13 +1,13 @@
-# Playbook contract v1
+# Runbook contract v1
 
-`playbook.json` is the deterministic contract surrounding a model-facing workflow procedure. A playbook is not tied to an Agent Skill: it may be skill-less, use `SKILL.md` as its procedure for compatibility, or declare multiple optional skill dependencies.
+`runbook.json` is the deterministic contract surrounding a model-facing workflow procedure. A runbook is not tied to an Agent Skill: it may be skill-less, use `SKILL.md` as its procedure for compatibility, or declare multiple optional skill dependencies.
 
 ## Required fields
 
 | Field | Meaning |
 |---|---|
 | `schemaVersion` | Must be `1`. |
-| `name` | Lowercase playbook identifier using letters, numbers, and hyphens. |
+| `name` | Lowercase runbook identifier using letters, numbers, and hyphens. |
 | `version` | Source version label. Artifact identity still comes from content. |
 | `description` | Human-readable purpose. |
 | `invocation` | `explicit` or `auto`. |
@@ -22,17 +22,17 @@ A skill-less workflow should explicitly select an ordinary Markdown procedure:
 
 ```json
 {
-  "procedure": "PLAYBOOK.md"
+  "procedure": "RUNBOOK.md"
 }
 ```
 
-If `procedure` is omitted, sealing chooses `PLAYBOOK.md` when present and otherwise accepts a root `SKILL.md` for backward compatibility.
+If `procedure` is omitted, sealing chooses `RUNBOOK.md` when present and otherwise accepts a root `SKILL.md` for backward compatibility.
 
-Optional Agent Skills are dependencies, not the identity of the playbook:
+Optional Agent Skills are dependencies, not the identity of the runbook:
 
 ```json
 {
-  "procedure": "PLAYBOOK.md",
+  "procedure": "RUNBOOK.md",
   "skillDependencies": [
     "skills/research",
     "skills/report-writing"
@@ -40,7 +40,7 @@ Optional Agent Skills are dependencies, not the identity of the playbook:
 }
 ```
 
-Every dependency path must stay inside the bundle and point to a directory containing `SKILL.md`. Dependencies are sealed with that playbook version and exposed to the model for on-demand reading. A later candidate may add or remove dependencies without changing the active release or the original installed skills.
+Every dependency path must stay inside the bundle and point to a directory containing `SKILL.md`. Dependencies are sealed with that runbook version and exposed to the model for on-demand reading. A later candidate may add or remove dependencies without changing the active release or the original installed skills.
 
 ## Applicability
 
@@ -71,7 +71,7 @@ Applicability uses normalized trusted filesystem attributes. Missing attributes 
 }
 ```
 
-Paths are relative to the run working directory and cannot contain `..` or be absolute. `playbook_checkpoint` hashes artifact files at stage boundaries.
+Paths are relative to the run working directory and cannot contain `..` or be absolute. `runbook_checkpoint` hashes artifact files at stage boundaries.
 
 ## Success predicates
 
@@ -86,7 +86,7 @@ Version 1 supports deterministic filesystem predicates:
 }
 ```
 
-`playbook_finish` rejects a `success` outcome while any predicate fails. A valid outcome moves the run into review rather than closing it: follow-up questions and requested changes remain governed by the same pinned playbook. Material changes can update the proposed outcome with another `playbook_finish` call. The user closes the reviewed run explicitly with `/playbook close`, which starts automatic evidence-based learning. Pi either records `no_change` or prepares, seals, and deterministically evaluates a candidate before presenting one human approval decision. Failure and abandonment remain recordable even when outputs are incomplete. `/playbook draft` remains available as an advanced manual fallback.
+`runbook_finish` rejects a `success` outcome while any predicate fails. A valid outcome moves the run into review rather than closing it: follow-up questions and requested changes remain governed by the same pinned runbook. Material changes can update the proposed outcome with another `runbook_finish` call. The user closes the reviewed run explicitly with `/runbook close`, which starts automatic evidence-based learning. Pi either records `no_change` or prepares, seals, and deterministically evaluates a candidate before presenting one human approval decision. Failure and abandonment remain recordable even when outputs are incomplete. `/runbook draft` remains available as an advanced manual fallback.
 
 ## Evidence policy
 
@@ -101,7 +101,7 @@ Version 1 supports deterministic filesystem predicates:
 
 The current ledger always minimizes action arguments to hashes. Promotion levels describe admissible evidence for future trial governance; current candidates receive deterministic checks and still require explicit human approval rather than unattended promotion.
 
-When automatic learning or `/playbook draft` can access the run's Pi session trace, it separately builds a transient, run-bounded summary of bash command text and outcomes so the learning model can identify deterministic consolidation or helper-script opportunities. Tool output and non-command arguments are omitted, likely inline credentials are redacted, and this summary is not written to the fact ledger. Automation must be supported by observed execution evidence; an unexecuted suggestion or argument hash is insufficient.
+When automatic learning or `/runbook draft` can access the run's Pi session trace, it separately builds a transient, run-bounded summary of bash command text and outcomes so the learning model can identify deterministic consolidation or helper-script opportunities. Tool output and non-command arguments are omitted, likely inline credentials are redacted, and this summary is not written to the fact ledger. Automation must be supported by observed execution evidence; an unexecuted suggestion or argument hash is insufficient.
 
 ## Workflow gates
 

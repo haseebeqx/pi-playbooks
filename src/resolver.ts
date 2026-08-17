@@ -1,13 +1,13 @@
 import type { ArtifactStore } from "./artifacts.js";
 import { isApplicable } from "./contract.js";
 import type { ReleaseRegistry } from "./registry.js";
-import type { PlaybookContract, ReleaseScope, RunReleaseScope } from "./types.js";
+import type { RunbookContract, ReleaseScope, RunReleaseScope } from "./types.js";
 
 export interface ResolvedRelease {
   name: string;
   digest: string;
   scope: RunReleaseScope;
-  contract: PlaybookContract;
+  contract: RunbookContract;
 }
 
 export async function resolveNamed(

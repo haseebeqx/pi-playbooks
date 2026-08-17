@@ -2,9 +2,9 @@ import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { validateContract } from "./contract.js";
 import { atomicWriteJson, exists, readJson } from "./io.js";
-import type { PlaybookContract } from "./types.js";
+import type { RunbookContract } from "./types.js";
 
-export const CANDIDATE_METADATA_FILE = ".pi-playbook-candidate.json";
+export const CANDIDATE_METADATA_FILE = ".pi-runbook-candidate.json";
 
 export interface CandidateMetadata {
   schemaVersion: 1;
@@ -16,7 +16,7 @@ export interface CandidateMetadata {
 export interface ProjectCandidate {
   directoryName: string;
   sourcePath: string;
-  contract?: PlaybookContract;
+  contract?: RunbookContract;
   metadata?: CandidateMetadata;
   error?: string;
 }
@@ -63,11 +63,11 @@ export async function listProjectCandidates(root: string): Promise<ProjectCandid
 
   return Promise.all(entries.map(async (entry): Promise<ProjectCandidate> => {
     const sourcePath = join(root, entry.name);
-    const contractPath = join(sourcePath, "playbook.json");
+    const contractPath = join(sourcePath, "runbook.json");
     try {
-      if (!await exists(contractPath)) throw new Error("missing playbook.json");
+      if (!await exists(contractPath)) throw new Error("missing runbook.json");
       const info = await lstat(contractPath);
-      if (!info.isFile() || info.isSymbolicLink()) throw new Error("playbook.json must be a regular file");
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error("runbook.json must be a regular file");
       const metadata = await readCandidateMetadata(sourcePath);
       return {
         directoryName: entry.name,

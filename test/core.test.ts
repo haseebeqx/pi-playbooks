@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import playbooksExtension from "../extensions/playbooks.js";
+import runbooksExtension from "../extensions/runbooks.js";
 import { ArtifactStore } from "../src/artifacts.js";
 import { CANDIDATE_METADATA_FILE, listProjectCandidates, selectProjectCandidate, writeCandidateMetadata } from "../src/candidates.js";
 import { validateContract, isApplicable } from "../src/contract.js";
@@ -21,7 +21,7 @@ import { commandEvidenceFromSession, redactCommand } from "../src/trajectory.js"
 function contract(overrides: Record<string, unknown> = {}) {
   return {
     schemaVersion: 1,
-    name: "research-playbook",
+    name: "research-runbook",
     version: "0.1.0",
     description: "A complex research workflow",
     invocation: "explicit",
@@ -32,27 +32,29 @@ function contract(overrides: Record<string, unknown> = {}) {
   };
 }
 
-test("extension loading only uses registration methods", () => {
-  const registrations = { events: 0, tools: 0, commands: 0 };
+test("extension loading registers only the runbook namespace and tools", () => {
+  const registrations = { events: 0, tools: [] as string[], commands: [] as string[] };
   const loadingApi = {
     on: () => { registrations.events += 1; },
-    registerTool: () => { registrations.tools += 1; },
-    registerCommand: () => { registrations.commands += 1; },
+    registerTool: (tool: { name: string }) => { registrations.tools.push(tool.name); },
+    registerCommand: (name: string) => { registrations.commands.push(name); },
     getActiveTools: () => { throw new Error("action method called during extension loading"); },
     getAllTools: () => { throw new Error("action method called during extension loading"); },
     setActiveTools: () => { throw new Error("action method called during extension loading"); },
   } as unknown as ExtensionAPI;
 
-  assert.doesNotThrow(() => playbooksExtension(loadingApi));
-  assert.deepEqual(registrations, { events: 8, tools: 3, commands: 1 });
+  assert.doesNotThrow(() => runbooksExtension(loadingApi));
+  assert.equal(registrations.events, 8);
+  assert.deepEqual(registrations.commands, ["runbook"]);
+  assert.deepEqual(registrations.tools.sort(), ["runbook_checkpoint", "runbook_complete_learning", "runbook_finish"]);
 });
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-"));
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-"));
   const source = join(root, "source");
   await mkdir(join(source, "scripts"), { recursive: true });
-  await writeFile(join(source, "SKILL.md"), "---\nname: research-playbook\ndescription: Research.\n---\n\n# Procedure\n", "utf8");
-  await writeFile(join(source, "playbook.json"), `${JSON.stringify(contract(), null, 2)}\n`, "utf8");
+  await writeFile(join(source, "SKILL.md"), "---\nname: research-runbook\ndescription: Research.\n---\n\n# Procedure\n", "utf8");
+  await writeFile(join(source, "runbook.json"), `${JSON.stringify(contract(), null, 2)}\n`, "utf8");
   await writeFile(join(source, "scripts", "validate.sh"), "#!/bin/sh\nexit 0\n", "utf8");
   await chmod(join(source, "scripts", "validate.sh"), 0o755);
   return { root, source, home: join(root, "home") };
@@ -85,21 +87,21 @@ test("applicability is deterministic and UNKNOWN does not match", async () => {
   assert.equal((await isApplicable(parsed, root)).matches, true);
 });
 
-test("playbooks can be skill-less or declare multiple skill dependencies", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-workflow-"));
+test("runbooks can be skill-less or declare multiple skill dependencies", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-workflow-"));
   const source = join(root, "source");
   await mkdir(join(source, "skills", "research"), { recursive: true });
   await mkdir(join(source, "skills", "reporting"), { recursive: true });
-  await writeFile(join(source, "PLAYBOOK.md"), "# Skill-less main workflow\n");
+  await writeFile(join(source, "RUNBOOK.md"), "# Skill-less main workflow\n");
   await writeFile(join(source, "skills", "research", "SKILL.md"), "---\nname: research\ndescription: Research.\n---\n");
   await writeFile(join(source, "skills", "reporting", "SKILL.md"), "---\nname: reporting\ndescription: Report.\n---\n");
-  await writeFile(join(source, "playbook.json"), JSON.stringify(contract({
-    procedure: "PLAYBOOK.md",
+  await writeFile(join(source, "runbook.json"), JSON.stringify(contract({
+    procedure: "RUNBOOK.md",
     skillDependencies: ["skills/research", "skills/reporting"],
   })));
   const store = new ArtifactStore(join(root, "home"));
   const manifest = await store.seal(source);
-  assert.equal(manifest.procedurePath, "PLAYBOOK.md");
+  assert.equal(manifest.procedurePath, "RUNBOOK.md");
   assert.equal(await store.procedure(manifest.digest), "# Skill-less main workflow\n");
   assert.deepEqual(manifest.contract.skillDependencies, ["skills/research", "skills/reporting"]);
 });
@@ -110,7 +112,7 @@ test("sealing is content-addressed, immutable, and detects mutation", async () =
   const first = await store.seal(source);
   const second = await store.seal(source);
   assert.equal(first.digest, second.digest);
-  assert.equal((await store.contract(first.digest)).name, "research-playbook");
+  assert.equal((await store.contract(first.digest)).name, "research-runbook");
   await chmod(join(store.contentRoot(first.digest), "SKILL.md"), 0o644);
   await writeFile(join(store.contentRoot(first.digest), "SKILL.md"), "mutated");
   await assert.rejects(store.verify(first.digest), /integrity check failed/);
@@ -137,7 +139,7 @@ test("candidate evaluation verifies identity, evidence state, and material artif
   const base = await artifacts.seal(source);
   const runs = new RunStore(home);
   const run = await runs.create({
-    playbookName: base.contract.name,
+    runbookName: base.contract.name,
     artifactDigest: base.digest,
     releaseScope: "personal",
     cwd: root,
@@ -151,28 +153,28 @@ test("candidate evaluation verifies identity, evidence state, and material artif
   const candidateDirectory = join(root, "candidate");
   await artifacts.materializeForRevision(base.digest, candidateDirectory);
   await writeFile(join(candidateDirectory, "SKILL.md"), "# Improved procedure\n");
-  await writeFile(join(candidateDirectory, "playbook.json"), `${JSON.stringify(contract({ version: "0.1.1" }), null, 2)}\n`);
+  await writeFile(join(candidateDirectory, "runbook.json"), `${JSON.stringify(contract({ version: "0.1.1" }), null, 2)}\n`);
   const candidate = await artifacts.seal(candidateDirectory);
   const evaluation = await evaluateCandidate(artifacts, run, candidate.digest);
 
   assert.equal(evaluation.passed, true);
-  assert.deepEqual(evaluation.changes, { added: [], modified: ["SKILL.md", "playbook.json"], removed: [] });
+  assert.deepEqual(evaluation.changes, { added: [], modified: ["SKILL.md", "runbook.json"], removed: [] });
   assert.deepEqual(artifactChanges(base, candidate), evaluation.changes);
   assert.equal(evaluation.checks.every((check) => check.passed), true);
 });
 
 test("personal registry promotion and rollback preserve lineage", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-registry-"));
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-registry-"));
   const registry = new ReleaseRegistry(join(root, "registry.json"));
-  await registry.promote("research-playbook", "a".repeat(64));
-  await registry.promote("research-playbook", "b".repeat(64));
-  const rolledBack = await registry.rollback("research-playbook");
+  await registry.promote("research-runbook", "a".repeat(64));
+  await registry.promote("research-runbook", "b".repeat(64));
+  const rolledBack = await registry.rollback("research-runbook");
   assert.equal(rolledBack.digest, "a".repeat(64));
   assert.equal(rolledBack.previousDigest, "b".repeat(64));
 });
 
 test("automatic resolution honors personal-over-team precedence", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-resolution-"));
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-resolution-"));
   const personal = new ReleaseRegistry(join(root, "personal.json"));
   const team = new ReleaseRegistry(join(root, "team.json"));
   await personal.promote("personal-auto", "a".repeat(64));
@@ -188,12 +190,12 @@ test("automatic resolution honors personal-over-team precedence", async () => {
 });
 
 test("project candidate workspaces are discovered with provenance and invalid entries remain visible", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-candidates-"));
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-candidates-"));
   const valid = join(root, "review-process-run123");
   const invalid = join(root, "unfinished");
   await mkdir(valid);
   await mkdir(invalid);
-  await writeFile(join(valid, "playbook.json"), JSON.stringify(contract({ name: "review-process" })));
+  await writeFile(join(valid, "runbook.json"), JSON.stringify(contract({ name: "review-process" })));
   await writeCandidateMetadata(valid, { baseDigest: "a".repeat(64), runId: "12345678-1234-1234-1234-123456789abc", workflow: "automatic" });
 
   const candidates = await listProjectCandidates(root);
@@ -201,7 +203,7 @@ test("project candidate workspaces are discovered with provenance and invalid en
   assert.equal(candidates[0]?.contract?.name, "review-process");
   assert.equal(candidates[0]?.metadata?.baseDigest, "a".repeat(64));
   assert.equal(candidates[0]?.metadata?.workflow, "automatic");
-  assert.match(candidates[1]?.error ?? "", /missing playbook.json/);
+  assert.match(candidates[1]?.error ?? "", /missing runbook.json/);
 });
 
 test("project candidates resolve by contract name or exact directory without requiring approval", () => {
@@ -209,7 +211,7 @@ test("project candidates resolve by contract name or exact directory without req
   const candidates = [
     { directoryName: "review-process-run123", sourcePath: "/one", contract: parsed },
     { directoryName: "review-process-run456", sourcePath: "/two", contract: parsed },
-    { directoryName: "broken", sourcePath: "/broken", error: "missing playbook.json" },
+    { directoryName: "broken", sourcePath: "/broken", error: "missing runbook.json" },
   ];
 
   assert.equal(selectProjectCandidate([candidates[0]!], "review-process")?.sourcePath, "/one");
@@ -218,7 +220,7 @@ test("project candidates resolve by contract name or exact directory without req
     () => selectProjectCandidate(candidates, "review-process"),
     /Choose a candidate directory: review-process-run123, review-process-run456/,
   );
-  assert.throws(() => selectProjectCandidate(candidates, "broken"), /missing playbook.json/);
+  assert.throws(() => selectProjectCandidate(candidates, "broken"), /missing runbook.json/);
 });
 
 test("candidate provenance is not included in sealed artifacts", async () => {
@@ -229,10 +231,10 @@ test("candidate provenance is not included in sealed artifacts", async () => {
 });
 
 test("equivalent learning proposals are suppressed", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-proposals-"));
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-proposals-"));
   const proposals = new ProposalStore(root);
   const input = {
-    name: "research-playbook",
+    name: "research-runbook",
     candidateDigest: "b".repeat(64),
     baseDigest: "a".repeat(64),
     evidenceRunIds: ["run-1"],
@@ -245,10 +247,10 @@ test("equivalent learning proposals are suppressed", async () => {
 });
 
 test("only pending proposals can be promoted or rejected", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-proposal-status-"));
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-proposal-status-"));
   const proposals = new ProposalStore(root);
   const proposal = await proposals.create({
-    name: "research-playbook",
+    name: "research-runbook",
     candidateDigest: "b".repeat(64),
     evidenceRunIds: [],
     rationale: "Bootstrap candidate",
@@ -263,10 +265,10 @@ test("only pending proposals can be promoted or rejected", async () => {
 });
 
 test("run assignment remains pinned while registry changes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-runs-"));
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-runs-"));
   const runs = new RunStore(root);
   const run = await runs.create({
-    playbookName: "research-playbook",
+    runbookName: "research-runbook",
     artifactDigest: "a".repeat(64),
     releaseScope: "personal",
     cwd: root,
@@ -289,7 +291,7 @@ test("run assignment remains pinned while registry changes", async () => {
 });
 
 test("success predicates and effect policy fail closed", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-outcome-"));
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-outcome-"));
   const parsed = validateContract(contract());
   assert.equal((await evaluatePredicates(parsed, root))[0]?.passed, false);
   await mkdir(join(root, "results"));
@@ -309,8 +311,8 @@ test("success predicates and effect policy fail closed", async () => {
 });
 
 test("run artifacts cannot resolve through symlinks outside the run directory", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-symlink-"));
-  const outside = await mkdtemp(join(tmpdir(), "pi-playbooks-outside-"));
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-symlink-"));
+  const outside = await mkdtemp(join(tmpdir(), "pi-runbooks-outside-"));
   await writeFile(join(outside, "report.md"), "external report\n");
   await symlink(outside, join(root, "results"));
   const parsed = validateContract(contract());
@@ -322,7 +324,7 @@ test("run artifacts cannot resolve through symlinks outside the run directory", 
 });
 
 test("draft command evidence is run-bounded, outcome-aware, aggregated, and redacted", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-trajectory-"));
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-trajectory-"));
   const sessionFile = join(root, "session.jsonl");
   const entries = [
     { type: "message", timestamp: "2026-01-01T00:00:00.000Z", message: { role: "assistant", content: [{ type: "toolCall", id: "before", name: "bash", arguments: { command: "ignore-before" } }] } },
@@ -349,7 +351,7 @@ test("draft command evidence is run-bounded, outcome-aware, aggregated, and reda
 });
 
 test("fact ledger appends complete JSONL records", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-playbooks-ledger-"));
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-ledger-"));
   const path = join(root, "facts.jsonl");
   const ledger = new FactLedger(path);
   await Promise.all([

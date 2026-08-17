@@ -26,7 +26,7 @@ import {
   verifyToolAttestations,
   type ToolMetadata,
 } from "../src/policy.js";
-import type { LedgerFact, PlaybookContract, PlaybookRun } from "../src/types.js";
+import type { LedgerFact, RunbookContract, RunbookRun } from "../src/types.js";
 
 const CheckpointParameters = Type.Object({
   stage: Type.String({ description: "Stable workflow stage name" }),
@@ -50,23 +50,23 @@ const CompleteLearningParameters = Type.Object({
 });
 
 const COMMAND_HELP: ReadonlyArray<readonly [name: string, usage: string, description: string]> = [
-  ["run", "run <playbook-name> [request]", "Start an approved playbook or local candidate as written, or provide a request to refine it or create an ad hoc workflow."],
-  ["record", "record [playbook-name]", "Convert the current session so far into a reusable playbook."],
+  ["run", "run <runbook-name> [request]", "Start an approved runbook or local candidate as written, or provide a request to refine it or create an ad hoc workflow."],
+  ["record", "record [runbook-name]", "Convert the current session so far into a reusable runbook."],
   ["status", "status", "Show the active run, current stage, and status."],
-  ["list", "list", "List approved playbooks, project candidate workspaces, and submitted proposals."],
-  ["edit", "edit <playbook-name> [destination]", "Create an editable candidate from the currently approved release."],
-  ["instruct", "instruct <playbook-name> <instruction>", "Add a persistent instruction and request approval for future runs."],
+  ["list", "list", "List approved runbooks, project candidate workspaces, and submitted proposals."],
+  ["edit", "edit <runbook-name> [destination]", "Create an editable candidate from the currently approved release."],
+  ["instruct", "instruct <runbook-name> <instruction>", "Add a persistent instruction and request approval for future runs."],
   ["approve", "approve", "Approve the workflow gate currently waiting for your decision."],
   ["close", "close", "Close a reviewed run and start automatic evidence-based learning."],
   ["resume", "resume <run-id>", "Attach an unfinished or review-ready run to this Pi session."],
   ["abort", "abort [reason]", "Abandon the active run and optionally record why."],
-  ["seal", "seal <source-directory>", "Create an immutable playbook artifact from a source directory."],
+  ["seal", "seal <source-directory>", "Create an immutable runbook artifact from a source directory."],
   ["verify", "verify [digest]", "Verify a sealed artifact, or the active run's artifact."],
   ["draft", "draft <run-id> [destination]", "Advanced: create an editable improvement workspace from a completed run."],
   ["propose", "propose <candidate>", "Advanced: submit a manually prepared candidate without activating it."],
-  ["promote", "promote <proposal-id|digest>", "Advanced: activate a reviewed proposal or bootstrap a sealed playbook."],
+  ["promote", "promote <proposal-id|digest>", "Advanced: activate a reviewed proposal or bootstrap a sealed runbook."],
   ["reject", "reject <proposal-id> [reason]", "Advanced: reject a candidate proposal without changing the active version."],
-  ["rollback", "rollback <playbook-name>", "Return future runs to the preceding approved version."],
+  ["rollback", "rollback <runbook-name>", "Return future runs to the preceding approved version."],
 ];
 
 function parseWords(input: string): string[] {
@@ -90,7 +90,7 @@ function parseWords(input: string): string[] {
   return words;
 }
 
-function suggestedPlaybookName(request: string): string {
+function suggestedRunbookName(request: string): string {
   const slug = request.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48).replace(/-$/g, "");
   return slug || "reusable-workflow";
 }
@@ -114,7 +114,7 @@ function firstUserText(ctx: ExtensionContext): string | undefined {
 
 function teamRegistryFor(ctx: ExtensionContext): ReleaseRegistry | undefined {
   if (!ctx.isProjectTrusted()) return undefined;
-  return new ReleaseRegistry(join(ctx.cwd, CONFIG_DIR_NAME, "playbooks", "registry.json"), false);
+  return new ReleaseRegistry(join(ctx.cwd, CONFIG_DIR_NAME, "runbooks", "registry.json"), false);
 }
 
 function toolMetadata(pi: ExtensionAPI): ToolMetadata[] {
@@ -126,27 +126,27 @@ function toolMetadata(pi: ExtensionAPI): ToolMetadata[] {
   }));
 }
 
-export default function playbooksExtension(pi: ExtensionAPI) {
-  const home = process.env.PI_PLAYBOOKS_HOME
-    ? resolve(process.env.PI_PLAYBOOKS_HOME)
-    : join(getAgentDir(), "playbooks");
+export default function runbooksExtension(pi: ExtensionAPI) {
+  const home = process.env.PI_RUNBOOKS_HOME
+    ? resolve(process.env.PI_RUNBOOKS_HOME)
+    : join(getAgentDir(), "runbooks");
   const artifacts = new ArtifactStore(home);
   const personal = new ReleaseRegistry(personalRegistryPath(home));
   const runs = new RunStore(home);
   const proposals = new ProposalStore(home);
   const ledger = new FactLedger(join(home, "facts.jsonl"));
-  let activeRun: PlaybookRun | undefined;
-  let activeContract: PlaybookContract | undefined;
+  let activeRun: RunbookRun | undefined;
+  let activeContract: RunbookContract | undefined;
   const blockedCalls = new Set<string>();
   let batchBarrierToolCallId: string | undefined;
   let suppressAutomaticOnce = false;
   let learningActive = false;
-  const governedToolNames = new Set(["playbook_checkpoint", "playbook_finish", "playbook_complete_learning"]);
+  const governedToolNames = new Set(["runbook_checkpoint", "runbook_finish", "runbook_complete_learning"]);
 
   const syncGovernedTools = () => {
     const active = pi.getActiveTools().filter((name) => !governedToolNames.has(name));
-    if (activeRun) active.push("playbook_checkpoint", "playbook_finish");
-    else if (learningActive) active.push("playbook_complete_learning");
+    if (activeRun) active.push("runbook_checkpoint", "runbook_finish");
+    else if (learningActive) active.push("runbook_complete_learning");
     pi.setActiveTools([...new Set(active)]);
   };
 
@@ -162,24 +162,24 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     return ledger.append(enriched);
   };
 
-  const setActive = async (run: PlaybookRun | undefined, ctx: ExtensionContext) => {
+  const setActive = async (run: RunbookRun | undefined, ctx: ExtensionContext) => {
     activeRun = run;
     activeContract = run ? await artifacts.contract(run.artifactDigest) : undefined;
-    ctx.ui.setStatus("pi-playbooks", run ? `playbook: ${run.playbookName} (${run.status})` : undefined);
+    ctx.ui.setStatus("pi-runbooks", run ? `runbook: ${run.runbookName} (${run.status})` : undefined);
     if (run?.pendingGate) {
-      ctx.ui.setWidget("pi-playbooks-approval", [
-        `Approval required · ${run.playbookName}`,
+      ctx.ui.setWidget("pi-runbooks-approval", [
+        `Approval required · ${run.runbookName}`,
         run.pendingGate.prompt,
-        "Use /playbook approve to continue, or send a message describing the changes you want.",
+        "Use /runbook approve to continue, or send a message describing the changes you want.",
       ]);
     } else if (run?.status === "review" && run.completionReview) {
-      ctx.ui.setWidget("pi-playbooks-approval", [
-        `Ready for review · ${run.playbookName}`,
+      ctx.ui.setWidget("pi-runbooks-approval", [
+        `Ready for review · ${run.runbookName}`,
         run.completionReview.summary,
-        "Ask for changes normally, or use /playbook close when satisfied.",
+        "Ask for changes normally, or use /runbook close when satisfied.",
       ]);
     } else {
-      ctx.ui.setWidget("pi-playbooks-approval", undefined);
+      ctx.ui.setWidget("pi-runbooks-approval", undefined);
     }
     syncGovernedTools();
   };
@@ -188,15 +188,15 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     await mkdir(home, { recursive: true });
     const source = await mkdtemp(join(home, ".ad-hoc-source-"));
     try {
-      await writeFile(join(source, "PLAYBOOK.md"), `# Ad hoc governed workflow\n\nCarry out the user's original request as a complete workflow.\n\n1. Clarify material ambiguity before taking consequential action.\n2. Inspect the current project and use any Pi skills that are relevant; the workflow is not tied to a preselected skill.\n3. Make a concise plan for complex work.\n4. Use playbook_checkpoint at meaningful stage boundaries and before waiting for user approval.\n5. Ask for explicit approval before irreversible, externally visible, credential, billing, infrastructure, deployment, or production effects.\n6. Verify the result rather than assuming an action succeeded.\n7. Call playbook_finish with success, failure, or abandoned when the requested work is ready for user review. The run remains open for questions and changes until the user closes it.\n\nThe original user request, not this generic procedure, defines the workflow goal.\n`, "utf8");
-      await writeFile(join(source, "playbook.json"), `${JSON.stringify({
+      await writeFile(join(source, "RUNBOOK.md"), `# Ad hoc governed workflow\n\nCarry out the user's original request as a complete workflow.\n\n1. Clarify material ambiguity before taking consequential action.\n2. Inspect the current project and use any Pi skills that are relevant; the workflow is not tied to a preselected skill.\n3. Make a concise plan for complex work.\n4. Use runbook_checkpoint at meaningful stage boundaries and before waiting for user approval.\n5. Ask for explicit approval before irreversible, externally visible, credential, billing, infrastructure, deployment, or production effects.\n6. Verify the result rather than assuming an action succeeded.\n7. Call runbook_finish with success, failure, or abandoned when the requested work is ready for user review. The run remains open for questions and changes until the user closes it.\n\nThe original user request, not this generic procedure, defines the workflow goal.\n`, "utf8");
+      await writeFile(join(source, "runbook.json"), `${JSON.stringify({
         schemaVersion: 1,
         name,
         version: "0.0.1",
-        description: "Governed capture of a user-requested workflow that does not require a pre-existing playbook",
+        description: "Governed capture of a user-requested workflow that does not require a pre-existing runbook",
         invocation: "explicit",
-        procedure: "PLAYBOOK.md",
-        requiredCapabilities: ["playbook_checkpoint", "playbook_finish"],
+        procedure: "RUNBOOK.md",
+        requiredCapabilities: ["runbook_checkpoint", "runbook_finish"],
         allowedEffectClasses: ["*"],
         evidencePolicy: { retainArgumentValues: false, promotionLevels: ["guarded", "sandboxed"] },
       }, null, 2)}\n`, "utf8");
@@ -209,7 +209,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
 
   const projectCandidateRelease = async (name: string, ctx: ExtensionContext): Promise<ResolvedRelease | undefined> => {
     if (!ctx.isProjectTrusted()) return undefined;
-    const root = join(ctx.cwd, CONFIG_DIR_NAME, "playbooks", "candidates");
+    const root = join(ctx.cwd, CONFIG_DIR_NAME, "runbooks", "candidates");
     const candidate = selectProjectCandidate(await listProjectCandidates(root), name);
     if (!candidate) return undefined;
     const manifest = await artifacts.seal(candidate.sourcePath);
@@ -225,14 +225,14 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     release: ResolvedRelease,
     prompt: string,
     ctx: ExtensionContext,
-  ): Promise<PlaybookRun> => {
+  ): Promise<RunbookRun> => {
     if (activeRun) throw new Error(`Run ${activeRun.runId} is already active`);
     await artifacts.verify(release.digest);
     const attestations = attestTools(release.contract.requiredCapabilities, toolMetadata(pi));
     const leaf = ctx.sessionManager.getLeafId();
     const sessionFile = ctx.sessionManager.getSessionFile();
     const run = await runs.create({
-      playbookName: release.name,
+      runbookName: release.name,
       artifactDigest: release.digest,
       releaseScope: release.scope,
       cwd: ctx.cwd,
@@ -243,36 +243,36 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       toolAttestations: attestations,
     });
     await setActive(run, ctx);
-    pi.appendEntry("pi-playbooks:assignment", {
+    pi.appendEntry("pi-runbooks:assignment", {
       runId: run.runId,
       assignmentId: run.assignmentId,
-      playbookName: run.playbookName,
+      runbookName: run.runbookName,
       artifactDigest: run.artifactDigest,
     });
-    await appendFact(ctx, { type: "RUN_ASSIGNED", reason: "fixed artifact assignment created before playbook execution" });
+    await appendFact(ctx, { type: "RUN_ASSIGNED", reason: "fixed artifact assignment created before runbook execution" });
     return run;
   };
 
-  const notifyRunStarted = (run: PlaybookRun, release: ResolvedRelease, ctx: ExtensionContext) => {
+  const notifyRunStarted = (run: RunbookRun, release: ResolvedRelease, ctx: ExtensionContext) => {
     const theme = ctx.ui.theme;
     const approved = release.scope === "personal" || release.scope === "team";
     const candidate = release.scope === "project-candidate";
     ctx.ui.notify([
-      theme.fg("success", theme.bold(`Started ${run.playbookName}`)),
+      theme.fg("success", theme.bold(`Started ${run.runbookName}`)),
       `Run ID: ${theme.fg("accent", run.runId)}`,
       approved
-        ? `Using ${theme.fg("success", `${release.scope} approved playbook`)} ${theme.fg("muted", release.digest.slice(0, 12) + "…")}`
+        ? `Using ${theme.fg("success", `${release.scope} approved runbook`)} ${theme.fg("muted", release.digest.slice(0, 12) + "…")}`
         : candidate
           ? `Using an immutable snapshot of local candidate ${theme.fg("muted", release.digest.slice(0, 12) + "…")}`
-          : theme.fg("warning", "This is a new ad hoc workflow; it is not yet a reusable approved playbook."),
+          : theme.fg("warning", "This is a new ad hoc workflow; it is not yet a reusable approved runbook."),
       approved || candidate
-        ? `Run it again later with ${theme.fg("accent", `/playbook run ${run.playbookName}`)} (optionally add a request)`
-        : theme.fg("muted", "When the run finishes, Pi will show how to turn it into a reusable playbook."),
+        ? `Run it again later with ${theme.fg("accent", `/runbook run ${run.runbookName}`)} (optionally add a request)`
+        : theme.fg("muted", "When the run finishes, Pi will show how to turn it into a reusable runbook."),
     ].join("\n"), "info");
   };
 
   const approveGate = async (ctx: ExtensionContext): Promise<void> => {
-    if (!activeRun?.pendingGate || activeRun.status !== "paused") throw new Error("No playbook approval gate is pending");
+    if (!activeRun?.pendingGate || activeRun.status !== "paused") throw new Error("No runbook approval gate is pending");
     const gate = activeRun.pendingGate;
     activeRun.status = "running";
     delete activeRun.pendingGate;
@@ -282,7 +282,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
   };
 
   const requestGateRevision = async (ctx: ExtensionContext, revision?: string): Promise<void> => {
-    if (!activeRun?.pendingGate || activeRun.status !== "paused") throw new Error("No playbook approval gate is pending");
+    if (!activeRun?.pendingGate || activeRun.status !== "paused") throw new Error("No runbook approval gate is pending");
     const gate = activeRun.pendingGate;
     activeRun.status = "running";
     delete activeRun.pendingGate;
@@ -298,9 +298,9 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     await setActive(activeRun, ctx);
   };
 
-  const closeReviewedRun = async (ctx: ExtensionContext): Promise<PlaybookRun> => {
+  const closeReviewedRun = async (ctx: ExtensionContext): Promise<RunbookRun> => {
     if (!activeRun || activeRun.status !== "review" || !activeRun.completionReview) {
-      throw new Error("No playbook run is ready to close. Complete the work and wait for Pi to submit it for review first.");
+      throw new Error("No runbook run is ready to close. Complete the work and wait for Pi to submit it for review first.");
     }
     const review = activeRun.completionReview;
     activeRun.status = review.outcome === "success" ? "completed" : review.outcome === "failure" ? "failed" : "abandoned";
@@ -313,7 +313,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     await runs.save(activeRun);
     await appendFact(ctx, {
       type: `RUN_${activeRun.status.toUpperCase()}`,
-      toolName: "playbook_close",
+      toolName: "runbook_close",
       enforcementLevel: "guarded",
       reason: review.summary,
       data: { predicateResults: review.predicateResults, userConfirmed: true },
@@ -324,8 +324,8 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     const theme = ctx.ui.theme;
     const successful = completedRun.status === "completed";
     ctx.ui.notify([
-      theme.fg(successful ? "success" : "warning", theme.bold(`Playbook run ${completedRun.status}`)),
-      `${completedRun.playbookName} · ${completedRun.runId}`,
+      theme.fg(successful ? "success" : "warning", theme.bold(`Runbook run ${completedRun.status}`)),
+      `${completedRun.runbookName} · ${completedRun.runId}`,
       review.summary,
       "",
       theme.fg("accent", "Pi will now learn from this run automatically."),
@@ -346,13 +346,13 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     if (activeRun) throw new Error("Finish or detach the active run before starting a learning draft");
     const run = await runs.read(runId);
     if (run.status !== "completed" && run.status !== "failed" && run.status !== "abandoned") {
-      throw new Error(`Run ${runId} is not closed yet. Review it and use /playbook close first.`);
+      throw new Error(`Run ${runId} is not closed yet. Review it and use /runbook close first.`);
     }
-    const defaultDirectoryName = `${run.playbookName}-${run.runId.slice(0, 8)}`;
-    const destination = resolve(ctx.cwd, destinationArgument ?? join(CONFIG_DIR_NAME, "playbooks", "candidates", defaultDirectoryName));
+    const defaultDirectoryName = `${run.runbookName}-${run.runId.slice(0, 8)}`;
+    const destination = resolve(ctx.cwd, destinationArgument ?? join(CONFIG_DIR_NAME, "runbooks", "candidates", defaultDirectoryName));
     const proposeCommand = destinationArgument
-      ? `/playbook propose ${JSON.stringify(relative(ctx.cwd, destination) || destination)} ${run.artifactDigest} ${run.runId}`
-      : `/playbook propose ${defaultDirectoryName}`;
+      ? `/runbook propose ${JSON.stringify(relative(ctx.cwd, destination) || destination)} ${run.artifactDigest} ${run.runId}`
+      : `/runbook propose ${defaultDirectoryName}`;
     await artifacts.materializeForRevision(run.artifactDigest, destination);
     await writeCandidateMetadata(destination, { baseDigest: run.artifactDigest, runId, workflow });
     const runFacts = (await ledger.readAll()).filter((fact) => fact.runId === runId).slice(-100);
@@ -362,35 +362,35 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       run.completion?.completedAt ?? run.updatedAt,
     );
     const adHocGuidance = learningPurpose === "record-session"
-      ? "\nThe user explicitly asked to convert the existing session so far into a reusable playbook. Infer the repeatable goal, ordered stages, important decisions, approval points, and verification steps from the conversation so far. The whole prior session context is potential evidence, but do not blindly copy it: omit secrets, credentials, raw outputs, incidental debugging, personal data, absolute paths, and one-off project details. Generalize necessary inputs with clear placeholders or applicability guards. Preserve only commands and automation supported by observed successful execution. Replace the generic procedure and description, keep the user-selected playbook name, and increment the source version."
+      ? "\nThe user explicitly asked to convert the existing session so far into a reusable runbook. Infer the repeatable goal, ordered stages, important decisions, approval points, and verification steps from the conversation so far. The whole prior session context is potential evidence, but do not blindly copy it: omit secrets, credentials, raw outputs, incidental debugging, personal data, absolute paths, and one-off project details. Generalize necessary inputs with clear placeholders or applicability guards. Preserve only commands and automation supported by observed successful execution. Replace the generic procedure and description, keep the user-selected runbook name, and increment the source version."
       : run.releaseScope === "explicit-digest"
-        ? "\nThis began as an ad hoc workflow. If the trajectory contains a genuinely reusable procedure, replace the generic instructions with that procedure and refine the contract description while keeping the user-selected playbook name unless they request a rename. Do not invent reusable instructions when the evidence supports only a one-off task. Add skillDependencies only when they materially improve the workflow."
+        ? "\nThis began as an ad hoc workflow. If the trajectory contains a genuinely reusable procedure, replace the generic instructions with that procedure and refine the contract description while keeping the user-selected runbook name unless they request a rename. Do not invent reusable instructions when the evidence supports only a one-off task. Add skillDependencies only when they materially improve the workflow."
         : "";
     const completionInstruction = workflow === "automatic"
-      ? `When the analysis is complete, you MUST call playbook_complete_learning exactly once with runId ${runId}. Use decision no_change when the evidence does not support a safe, material procedural improvement. Use decision propose only after editing the candidate. Do not ask the user to manage files, digests, proposals, or commands; the tool performs deterministic evaluation and presents the only required approval.`
+      ? `When the analysis is complete, you MUST call runbook_complete_learning exactly once with runId ${runId}. Use decision no_change when the evidence does not support a safe, material procedural improvement. Use decision propose only after editing the candidate. Do not ask the user to manage files, digests, proposals, or commands; the tool performs deterministic evaluation and presents the only required approval.`
       : `When finished, ask the user to review and run:\n${proposeCommand}`;
     suppressAutomaticOnce = true;
     learningActive = workflow === "automatic";
     syncGovernedTools();
     const taskIntroduction = learningPurpose === "record-session"
-      ? `Convert the current Pi session so far into a concise, reusable playbook. Use the prior conversation as evidence and create the smallest workflow that can reliably reproduce its successful process.`
-      : `Review the completed playbook run ${runId} and identify the smallest evidence-supported procedural improvement.`;
-    const learningTask = `${taskIntroduction}\n\nBase digest: ${run.artifactDigest}\nEditable candidate directory: ${destination}\nOriginal request: ${run.originalPrompt}\nTerminal status: ${run.status}\nCompletion: ${JSON.stringify(run.completion ?? null)}\nEvidence facts (execution-correlated, not causal claims):\n${JSON.stringify(runFacts, null, 2)}\nDeterministic command evidence (minimized from the Pi-owned session trace; command outputs and non-command arguments are omitted):\n${JSON.stringify(commandEvidence, null, 2)}\n\nEdit only the candidate directory, preserve the playbook structure and any declared skill dependencies, increment the source version when materially changed, and do not activate it.${adHocGuidance}\n\nExplicitly evaluate the command evidence for a token- or time-saving deterministic fast path. Add automation only when the observed trajectory supports it:\n1. Prefer a consolidated command when it can replace several observed smaller commands while preserving their checks and failure semantics.\n2. Add a helper under scripts/ only when repeated, stable command sequences justify maintaining one.\nRecord the supporting commands and outcomes in the candidate procedure, plus applicability guards. A successful observed command is evidence that it ran in this trajectory, not proof that it is universally correct. Never invent a command from argument hashes, promote an unexecuted optimization, copy likely credentials, or add a speculative helper. If evidence is insufficient, leave automation out.\n\n${completionInstruction}`;
+      ? `Convert the current Pi session so far into a concise, reusable runbook. Use the prior conversation as evidence and create the smallest workflow that can reliably reproduce its successful process.`
+      : `Review the completed runbook run ${runId} and identify the smallest evidence-supported procedural improvement.`;
+    const learningTask = `${taskIntroduction}\n\nBase digest: ${run.artifactDigest}\nEditable candidate directory: ${destination}\nOriginal request: ${run.originalPrompt}\nTerminal status: ${run.status}\nCompletion: ${JSON.stringify(run.completion ?? null)}\nEvidence facts (execution-correlated, not causal claims):\n${JSON.stringify(runFacts, null, 2)}\nDeterministic command evidence (minimized from the Pi-owned session trace; command outputs and non-command arguments are omitted):\n${JSON.stringify(commandEvidence, null, 2)}\n\nEdit only the candidate directory, preserve the runbook structure and any declared skill dependencies, increment the source version when materially changed, and do not activate it.${adHocGuidance}\n\nExplicitly evaluate the command evidence for a token- or time-saving deterministic fast path. Add automation only when the observed trajectory supports it:\n1. Prefer a consolidated command when it can replace several observed smaller commands while preserving their checks and failure semantics.\n2. Add a helper under scripts/ only when repeated, stable command sequences justify maintaining one.\nRecord the supporting commands and outcomes in the candidate procedure, plus applicability guards. A successful observed command is evidence that it ran in this trajectory, not proof that it is universally correct. Never invent a command from argument hashes, promote an unexecuted optimization, copy likely credentials, or add a speculative helper. If evidence is insufficient, leave automation out.\n\n${completionInstruction}`;
     pi.sendMessage({
-      customType: "playbook-learning-task",
+      customType: "runbook-learning-task",
       content: learningTask,
       display: false,
     }, { triggerTurn: true });
     const theme = ctx.ui.theme;
     ctx.ui.notify([
-      theme.fg("success", theme.bold(learningPurpose === "record-session" ? "Recording this session as a playbook" : workflow === "automatic" ? "Automatic playbook learning started" : "Playbook improvement workspace created")),
+      theme.fg("success", theme.bold(learningPurpose === "record-session" ? "Recording this session as a runbook" : workflow === "automatic" ? "Automatic runbook learning started" : "Runbook improvement workspace created")),
       workflow === "automatic" ? theme.fg("muted", learningPurpose === "record-session" ? "Pi is extracting a reusable workflow; no file or proposal commands are needed." : "Pi is analyzing the run; no draft or proposal commands are needed.") : destination,
       "",
       workflow === "automatic"
         ? theme.fg("text", "You will be asked only if Pi finds an improvement that passes deterministic checks.")
-        : theme.fg("text", "When the review is ready, Pi will give you a /playbook propose command."),
+        : theme.fg("text", "When the review is ready, Pi will give you a /runbook propose command."),
       workflow === "automatic"
-        ? theme.fg("muted", "The approved playbook remains unchanged until you approve the candidate.")
+        ? theme.fg("muted", "The approved runbook remains unchanged until you approve the candidate.")
         : theme.fg("muted", "After proposing, you will be able to promote or reject the candidate."),
     ].join("\n"), "info");
   };
@@ -401,12 +401,12 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     ctx: ExtensionContext,
   ): Promise<void> => {
     const release = await resolveNamed(name, artifacts, personal, teamRegistryFor(ctx));
-    if (!release) throw new Error(`No approved playbook named ${name}`);
+    if (!release) throw new Error(`No approved runbook named ${name}`);
 
     const defaultDirectoryName = `${name}-edit`;
     const destination = resolve(
       ctx.cwd,
-      destinationArgument ?? join(CONFIG_DIR_NAME, "playbooks", "candidates", defaultDirectoryName),
+      destinationArgument ?? join(CONFIG_DIR_NAME, "runbooks", "candidates", defaultDirectoryName),
     );
     await artifacts.materializeForRevision(release.digest, destination);
     const manifest = await artifacts.manifest(release.digest);
@@ -414,14 +414,14 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       ...manifest.contract,
       version: nextSourceVersion(manifest.contract.version),
     };
-    await writeFile(join(destination, "playbook.json"), `${JSON.stringify(updatedContract, null, 2)}\n`, "utf8");
+    await writeFile(join(destination, "runbook.json"), `${JSON.stringify(updatedContract, null, 2)}\n`, "utf8");
 
-    const candidateRoot = resolve(ctx.cwd, CONFIG_DIR_NAME, "playbooks", "candidates");
+    const candidateRoot = resolve(ctx.cwd, CONFIG_DIR_NAME, "runbooks", "candidates");
     const relativeCandidate = relative(candidateRoot, destination);
     const isDiscoverable = relativeCandidate !== "" && !relativeCandidate.startsWith("..") && !relativeCandidate.includes("/") && !relativeCandidate.includes("\\");
     const proposeCommand = isDiscoverable
-      ? `/playbook propose ${JSON.stringify(relativeCandidate)}`
-      : `/playbook propose ${JSON.stringify(relative(ctx.cwd, destination) || destination)} ${release.digest} none edited-approved-playbook`;
+      ? `/runbook propose ${JSON.stringify(relativeCandidate)}`
+      : `/runbook propose ${JSON.stringify(relative(ctx.cwd, destination) || destination)} ${release.digest} none edited-approved-runbook`;
     const theme = ctx.ui.theme;
     ctx.ui.notify([
       theme.fg("success", theme.bold(`Editable candidate created for ${name}`)),
@@ -440,9 +440,9 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     ctx: ExtensionContext,
   ): Promise<void> => {
     const release = await resolveNamed(name, artifacts, personal, teamRegistryFor(ctx));
-    if (!release) throw new Error(`No approved playbook named ${name}`);
+    if (!release) throw new Error(`No approved runbook named ${name}`);
     const normalizedInstruction = instruction.replace(/\s+/g, " ").trim();
-    if (!normalizedInstruction) throw new Error("Usage: /playbook instruct <playbook-name> <instruction>");
+    if (!normalizedInstruction) throw new Error("Usage: /runbook instruct <runbook-name> <instruction>");
 
     await mkdir(home, { recursive: true });
     const temporaryRoot = await mkdtemp(join(home, ".instruction-source-"));
@@ -457,7 +457,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         ...base.contract,
         version: nextSourceVersion(base.contract.version),
       };
-      await writeFile(join(source, "playbook.json"), `${JSON.stringify(updatedContract, null, 2)}\n`, "utf8");
+      await writeFile(join(source, "runbook.json"), `${JSON.stringify(updatedContract, null, 2)}\n`, "utf8");
 
       const candidate = await artifacts.seal(source);
       const changes = artifactChanges(base, candidate);
@@ -472,7 +472,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         type: "CANDIDATE_PROPOSED",
         artifactDigest: candidate.digest,
         reason: proposal.rationale,
-        data: { proposalId: proposal.proposalId, baseDigest: release.digest, evidenceRunIds: [], source: "playbook-instruct" },
+        data: { proposalId: proposal.proposalId, baseDigest: release.digest, evidenceRunIds: [], source: "runbook-instruct" },
       });
 
       const theme = ctx.ui.theme;
@@ -481,7 +481,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           theme.fg("success", theme.bold(`Instruction candidate ready for ${name}`)),
           `Proposal ID: ${proposal.proposalId}`,
           `Changed files: ${[...changes.added, ...changes.modified, ...changes.removed].join(", ")}`,
-          `Approve with: /playbook promote ${proposal.proposalId}`,
+          `Approve with: /runbook promote ${proposal.proposalId}`,
         ].join("\n"), "info");
         return;
       }
@@ -530,7 +530,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const found = await runs.activeForSession(ctx.sessionManager.getSessionId());
     if (found.length > 1) {
-      ctx.ui.notify("Multiple active playbook runs reference this session; use /playbook resume <runId>", "error");
+      ctx.ui.notify("Multiple active runbook runs reference this session; use /runbook resume <runId>", "error");
       await setActive(undefined, ctx);
       return;
     }
@@ -543,7 +543,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     if (!onAssignedBranch) {
       await appendFact(ctx, { type: "RUN_DETACHED_FROM_BRANCH", reason: "active branch no longer contains assignment root" });
       await setActive(undefined, ctx);
-      ctx.ui.notify("Playbook run detached because the session tree moved before its assignment", "warning");
+      ctx.ui.notify("Runbook run detached because the session tree moved before its assignment", "warning");
     }
   });
 
@@ -569,7 +569,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           reason: "same-priority applicability conflict; no implicit winner",
           data: { candidates: automatic.conflicts.map(({ name, digest, scope }) => ({ name, digest, scope })) },
         });
-        ctx.ui.notify(`Playbook conflict: ${automatic.conflicts.map((item) => item.name).join(", ")}`, "error");
+        ctx.ui.notify(`Runbook conflict: ${automatic.conflicts.map((item) => item.name).join(", ")}`, "error");
       } else if (automatic.match) {
         await createRun(automatic.match, event.prompt, ctx);
       }
@@ -586,10 +586,10 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       ? `\nThis run is PAUSED at gate ${activeRun.pendingGate.id}: ${activeRun.pendingGate.prompt}\nDo not perform later stages until the user explicitly approves. Revisions to the pending stage are allowed.`
       : "";
     const reviewText = activeRun.status === "review" && activeRun.completionReview
-      ? `\nThis run is IN REVIEW. Proposed outcome: ${activeRun.completionReview.outcome}. The user may ask questions or request changes, and all resulting work remains inside this governed run. Do not restart the procedure unnecessarily. If material changes alter the result, call playbook_finish again with an updated outcome and summary. Only the user closes the run with /playbook close.`
+      ? `\nThis run is IN REVIEW. Proposed outcome: ${activeRun.completionReview.outcome}. The user may ask questions or request changes, and all resulting work remains inside this governed run. Do not restart the procedure unnecessarily. If material changes alter the result, call runbook_finish again with an updated outcome and summary. Only the user closes the run with /runbook close.`
       : "";
     return {
-      systemPrompt: `${event.systemPrompt}\n\n# Active governed playbook\nRun ID: ${activeRun.runId}\nAssignment ID: ${activeRun.assignmentId}\nPinned artifact: ${activeRun.artifactDigest}\nImmutable playbook root: ${root}\nResolve all playbook-relative references, optional skills, and scripts beneath that root. Write declared run artifacts relative to the run cwd: ${activeRun.cwd}. The assignment remains fixed for the entire run. Use playbook_checkpoint at durable stage boundaries and use playbook_finish when work is ready for user review; the user explicitly closes the run after follow-ups.${skillDependencyText}${gateText}${reviewText}\n\n<playbook-procedure>\n${procedure}\n</playbook-procedure>`,
+      systemPrompt: `${event.systemPrompt}\n\n# Active governed runbook\nRun ID: ${activeRun.runId}\nAssignment ID: ${activeRun.assignmentId}\nPinned artifact: ${activeRun.artifactDigest}\nImmutable runbook root: ${root}\nResolve all runbook-relative references, optional skills, and scripts beneath that root. Write declared run artifacts relative to the run cwd: ${activeRun.cwd}. The assignment remains fixed for the entire run. Use runbook_checkpoint at durable stage boundaries and use runbook_finish when work is ready for user review; the user explicitly closes the run after follow-ups.${skillDependencyText}${gateText}${reviewText}\n\n<runbook-procedure>\n${procedure}\n</runbook-procedure>`,
     };
   });
 
@@ -610,10 +610,10 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     const argsHash = hashArguments(input);
     if (activeRun.status === "paused" || (batchBarrierToolCallId && batchBarrierToolCallId !== event.toolCallId)) {
       blockedCalls.add(event.toolCallId);
-      await appendFact(ctx, { type: "BLOCKED", toolCallId: event.toolCallId, toolName: event.toolName, argsHash, policyVersion: POLICY_VERSION, reason: activeRun.status === "paused" ? "playbook is paused at a workflow gate" : "a gate or terminal action earlier in this parallel batch established a safety barrier" });
-      return { block: true, reason: "Playbook workflow barrier is active" };
+      await appendFact(ctx, { type: "BLOCKED", toolCallId: event.toolCallId, toolName: event.toolName, argsHash, policyVersion: POLICY_VERSION, reason: activeRun.status === "paused" ? "runbook is paused at a workflow gate" : "a gate or terminal action earlier in this parallel batch established a safety barrier" });
+      return { block: true, reason: "Runbook workflow barrier is active" };
     }
-    if ((event.toolName === "playbook_checkpoint" && input.gate) || event.toolName === "playbook_finish") {
+    if ((event.toolName === "runbook_checkpoint" && input.gate) || event.toolName === "runbook_finish") {
       batchBarrierToolCallId = event.toolCallId;
     }
     try {
@@ -629,7 +629,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         argsHash,
         reason: `pre-effect attestation failed: ${(error as Error).message}`,
       });
-      return { block: true, reason: "Playbook assignment attestation failed" };
+      return { block: true, reason: "Runbook assignment attestation failed" };
     }
 
     const decision = decide(activeContract, event.toolName, input);
@@ -659,7 +659,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           : JSON.stringify(input, null, 2);
       const approved = await ctx.ui.confirm(
         `Allow this ${event.toolName} action once?`,
-        `Reason: ${decision.reason}\n\nAction:\n${action}\n\nPlaybook: ${activeRun.playbookName}\nThis approval applies only to this exact action.`,
+        `Reason: ${decision.reason}\n\nAction:\n${action}\n\nRunbook: ${activeRun.runbookName}\nThis approval applies only to this exact action.`,
       );
       if (!approved) {
         blockedCalls.add(event.toolCallId);
@@ -698,7 +698,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
     const argsHash = hashArguments({ command: event.command });
     if (decision.decision === "deny" || (decision.decision === "require_approval" && !ctx.hasUI)) {
       await appendFact(ctx, { type: "BLOCKED", toolName: "user_bash", argsHash, enforcementLevel: "observed", policyVersion: POLICY_VERSION, reason: decision.reason });
-      return { result: { output: `Blocked by active playbook: ${decision.reason}`, exitCode: 126, cancelled: false, truncated: false } };
+      return { result: { output: `Blocked by active runbook: ${decision.reason}`, exitCode: 126, cancelled: false, truncated: false } };
     }
     if (decision.decision === "require_approval") {
       const approved = await ctx.ui.confirm(
@@ -714,22 +714,22 @@ export default function playbooksExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "playbook_complete_learning",
-    label: "Complete playbook learning",
-    description: "Complete automatic learning for a closed playbook run. Either record that no material change is supported, or seal, evaluate, and present an evidence-linked candidate for one-step user approval.",
-    promptSnippet: "Finalize automatic playbook learning without exposing draft, proposal, or digest mechanics",
-    promptGuidelines: ["Use playbook_complete_learning exactly once when an automatic playbook-learning review instructs you to complete it."],
+    name: "runbook_complete_learning",
+    label: "Complete runbook learning",
+    description: "Complete automatic learning for a closed runbook run. Either record that no material change is supported, or seal, evaluate, and present an evidence-linked candidate for one-step user approval.",
+    promptSnippet: "Finalize automatic runbook learning without exposing draft, proposal, or digest mechanics",
+    promptGuidelines: ["Use runbook_complete_learning exactly once when an automatic runbook-learning review instructs you to complete it."],
     parameters: CompleteLearningParameters,
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
       // The completion call is terminal for the learning turn. Remove all
-      // playbook-only tools before the next model request, even if evaluation fails.
+      // runbook-only tools before the next model request, even if evaluation fails.
       learningActive = false;
       syncGovernedTools();
       const run = await runs.read(params.runId);
       if (run.status !== "completed" && run.status !== "failed" && run.status !== "abandoned") {
         throw new Error("Automatic learning requires a closed evidence run");
       }
-      const candidateRoot = join(run.cwd, CONFIG_DIR_NAME, "playbooks", "candidates");
+      const candidateRoot = join(run.cwd, CONFIG_DIR_NAME, "runbooks", "candidates");
       const matches = (await listProjectCandidates(candidateRoot)).filter((candidate) =>
         candidate.metadata?.runId === run.runId && candidate.metadata.workflow === "automatic",
       );
@@ -748,13 +748,13 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           assignmentId: run.assignmentId,
           artifactDigest: run.artifactDigest,
           toolCallId,
-          toolName: "playbook_complete_learning",
+          toolName: "runbook_complete_learning",
           enforcementLevel: "guarded",
           reason: params.summary,
         });
         await rm(candidate.sourcePath, { recursive: true, force: true });
         return {
-          content: [{ type: "text", text: "Automatic learning completed: the evidence did not support a safe, material playbook change. The temporary workspace was removed." }],
+          content: [{ type: "text", text: "Automatic learning completed: the evidence did not support a safe, material runbook change. The temporary workspace was removed." }],
           details: { runId: run.runId, decision: "no_change" },
         };
       }
@@ -803,7 +803,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         });
         throw new Error(lineageCurrent
           ? `Candidate did not pass deterministic evaluation: ${evaluation.checks.filter((check) => !check.passed).map((check) => check.reason).join("; ")}`
-          : "Candidate became stale before evaluation; the approved playbook was not changed");
+          : "Candidate became stale before evaluation; the approved runbook was not changed");
       }
 
       await ledger.append({
@@ -822,7 +822,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       ];
       if (!ctx.hasUI) {
         return {
-          content: [{ type: "text", text: `Candidate ${proposal.proposalId} passed deterministic evaluation and awaits human approval. In an interactive session, review it with /playbook list and promote or reject it.` }],
+          content: [{ type: "text", text: `Candidate ${proposal.proposalId} passed deterministic evaluation and awaits human approval. In an interactive session, review it with /runbook list and promote or reject it.` }],
           details: { runId: run.runId, proposalId: proposal.proposalId, decision: "awaiting_approval", evaluation },
         };
       }
@@ -843,7 +843,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           data: { proposalId: proposal.proposalId, fingerprint: proposal.fingerprint },
         });
         return {
-          content: [{ type: "text", text: "The user declined the learned update. The approved playbook remains unchanged." }],
+          content: [{ type: "text", text: "The user declined the learned update. The approved runbook remains unchanged." }],
           details: { runId: run.runId, proposalId: proposal.proposalId, decision: "rejected" },
         };
       }
@@ -875,15 +875,15 @@ export default function playbooksExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "playbook_checkpoint",
-    label: "Playbook checkpoint",
-    description: "Persist a governed playbook stage checkpoint, hash stage artifacts, and optionally pause at a workflow approval gate.",
-    promptSnippet: "Record durable playbook stage boundaries and approval gates",
-    promptGuidelines: ["Use playbook_checkpoint at every stage boundary required by the active governed playbook."],
+    name: "runbook_checkpoint",
+    label: "Runbook checkpoint",
+    description: "Persist a governed runbook stage checkpoint, hash stage artifacts, and optionally pause at a workflow approval gate.",
+    promptSnippet: "Record durable runbook stage boundaries and approval gates",
+    promptGuidelines: ["Use runbook_checkpoint at every stage boundary required by the active governed runbook."],
     parameters: CheckpointParameters,
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-      if (!activeRun) throw new Error("No active playbook run");
-      await appendFact(ctx, { type: "STARTED", toolCallId, toolName: "playbook_checkpoint", argsHash: hashArguments(params), enforcementLevel: "guarded", reason: "guarded checkpoint execution began with schema-validated final arguments" });
+      if (!activeRun) throw new Error("No active runbook run");
+      await appendFact(ctx, { type: "STARTED", toolCallId, toolName: "runbook_checkpoint", argsHash: hashArguments(params), enforcementLevel: "guarded", reason: "guarded checkpoint execution began with schema-validated final arguments" });
       const artifactHashes = [];
       for (const path of params.artifactPaths ?? []) artifactHashes.push(await hashRunArtifact(activeRun.cwd, path));
       activeRun.currentStage = params.stage;
@@ -895,7 +895,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       await appendFact(ctx, {
         type: params.gate ? "GATE_REQUESTED" : "CHECKPOINT",
         toolCallId,
-        toolName: "playbook_checkpoint",
+        toolName: "runbook_checkpoint",
         enforcementLevel: "guarded",
         reason: params.summary,
         data: { stage: params.stage, artifacts: artifactHashes, ...(params.gate ? { gateId: params.gate.id } : {}) },
@@ -949,16 +949,16 @@ export default function playbooksExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "playbook_finish",
-    label: "Submit playbook for review",
+    name: "runbook_finish",
+    label: "Submit runbook for review",
     description: "Mark the active governed run ready for user review after evaluating its deterministic completion predicates. The run remains active for follow-up questions and changes until the user closes it.",
-    promptSnippet: "Submit a playbook outcome for user review without closing the run",
-    promptGuidelines: ["Use playbook_finish when the requested work is ready for user review, and use it again if material follow-up changes alter the proposed outcome."],
+    promptSnippet: "Submit a runbook outcome for user review without closing the run",
+    promptGuidelines: ["Use runbook_finish when the requested work is ready for user review, and use it again if material follow-up changes alter the proposed outcome."],
     parameters: FinishParameters,
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-      if (!activeRun || !activeContract) throw new Error("No active playbook run");
+      if (!activeRun || !activeContract) throw new Error("No active runbook run");
       if (activeRun.pendingGate) throw new Error("Cannot finish while an approval gate is pending");
-      await appendFact(ctx, { type: "STARTED", toolCallId, toolName: "playbook_finish", argsHash: hashArguments(params), enforcementLevel: "guarded", reason: "guarded completion evaluation began with schema-validated final arguments" });
+      await appendFact(ctx, { type: "STARTED", toolCallId, toolName: "runbook_finish", argsHash: hashArguments(params), enforcementLevel: "guarded", reason: "guarded completion evaluation began with schema-validated final arguments" });
       const predicateResults = await evaluatePredicates(activeContract, activeRun.cwd);
       if (params.outcome === "success" && predicateResults.some((result) => !result.passed)) {
         throw new Error(`Success predicates failed: ${predicateResults.filter((result) => !result.passed).map((result) => result.reason).join("; ")}`);
@@ -974,7 +974,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       await appendFact(ctx, {
         type: "COMPLETION_PROPOSED",
         toolCallId,
-        toolName: "playbook_finish",
+        toolName: "runbook_finish",
         enforcementLevel: "guarded",
         reason: params.summary,
         data: { outcome: params.outcome, predicateResults },
@@ -983,15 +983,15 @@ export default function playbooksExtension(pi: ExtensionAPI) {
       return {
         content: [{
           type: "text",
-          text: `The proposed ${params.outcome} outcome is ready for user review. The run remains active. Answer follow-up questions and make requested changes within this playbook; the user will close it with /playbook close.`,
+          text: `The proposed ${params.outcome} outcome is ready for user review. The run remains active. Answer follow-up questions and make requested changes within this runbook; the user will close it with /runbook close.`,
         }],
         details: { runId: activeRun.runId, status: activeRun.status, proposedOutcome: params.outcome, predicateResults },
       };
     },
   });
 
-  pi.registerCommand("playbook", {
-    description: "Governed playbooks: create, run, improve, approve, and reuse reliable workflows",
+  pi.registerCommand("runbook", {
+    description: "Governed runbooks: create, run, improve, approve, and reuse reliable workflows",
     getArgumentCompletions: (prefix) => {
       if (/\s/.test(prefix)) return null;
       const items = COMMAND_HELP
@@ -1005,10 +1005,10 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         const knownCommands = new Set(COMMAND_HELP.map(([name]) => name));
         const team = teamRegistryFor(ctx);
         const nameAndStart = async (prompt: string) => {
-          if (!ctx.hasUI) throw new Error("This mode cannot ask for a name. Use /playbook run <name> <request>");
+          if (!ctx.hasUI) throw new Error("This mode cannot ask for a name. Use /runbook run <name> <request>");
           let name: string | undefined;
           while (!name) {
-            const entered = await ctx.ui.input("Name this playbook", suggestedPlaybookName(prompt));
+            const entered = await ctx.ui.input("Name this runbook", suggestedRunbookName(prompt));
             if (!entered?.trim()) return;
             if (/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(entered)) name = entered;
             else ctx.ui.notify("Use lowercase letters, numbers, and single hyphens (for example: heroku-deploy)", "warning");
@@ -1023,7 +1023,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           if (activeRun) {
             const theme = ctx.ui.theme;
             const lines = [
-              theme.fg("accent", theme.bold(activeRun.playbookName)),
+              theme.fg("accent", theme.bold(activeRun.runbookName)),
               `Run ID: ${activeRun.runId}`,
               `Status: ${activeRun.status} · Stage: ${activeRun.currentStage ?? "not set"}`,
             ];
@@ -1031,22 +1031,22 @@ export default function playbooksExtension(pi: ExtensionAPI) {
               lines.push(
                 "",
                 theme.fg("warning", `Waiting for your approval: ${activeRun.pendingGate.prompt}`),
-                `Continue with ${theme.fg("success", "/playbook approve")}`,
+                `Continue with ${theme.fg("success", "/runbook approve")}`,
               );
             } else if (activeRun.status === "review") {
               lines.push(
                 "",
                 theme.fg("accent", "Ready for your review. Ask questions or request changes normally."),
-                `When satisfied: ${theme.fg("success", "/playbook close")}`,
+                `When satisfied: ${theme.fg("success", "/runbook close")}`,
               );
             } else {
-              lines.push("", theme.fg("muted", "Use /playbook status for details or /playbook abort <reason> to stop."));
+              lines.push("", theme.fg("muted", "Use /runbook status for details or /runbook abort <reason> to stop."));
             }
             ctx.ui.notify(lines.join("\n"), "info");
             return;
           }
           if (!ctx.hasUI) {
-            ctx.ui.notify("Use /playbook run <name> [request]", "info");
+            ctx.ui.notify("Use /runbook run <name> [request]", "info");
             return;
           }
           const prompt = await ctx.ui.input("What would you like Pi to do?", "Describe a workflow or task");
@@ -1059,15 +1059,15 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         if (!knownCommands.has(command)) {
           const theme = ctx.ui.theme;
           const help = [
-            theme.fg("error", theme.bold(`Unknown playbook command: ${JSON.stringify(command)}`)),
+            theme.fg("error", theme.bold(`Unknown runbook command: ${JSON.stringify(command)}`)),
             "",
-            theme.fg("text", "Workflow requests are not accepted directly after /playbook."),
-            theme.fg("muted", "Start interactively with /playbook, or use the explicit run command:"),
-            `  ${theme.fg("success", "/playbook run <playbook-name> [request]")}`,
+            theme.fg("text", "Workflow requests are not accepted directly after /runbook."),
+            theme.fg("muted", "Start interactively with /runbook, or use the explicit run command:"),
+            `  ${theme.fg("success", "/runbook run <runbook-name> [request]")}`,
             "",
-            theme.fg("accent", theme.bold("Playbook commands")),
+            theme.fg("accent", theme.bold("Runbook commands")),
             ...COMMAND_HELP.flatMap(([, usage, description]) => [
-              `  ${theme.fg("accent", `/playbook ${usage}`)}`,
+              `  ${theme.fg("accent", `/runbook ${usage}`)}`,
               `    ${theme.fg("muted", description)}`,
             ]),
           ];
@@ -1076,7 +1076,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         }
         if (command === "record") {
           let name = words.shift();
-          if (words.length > 0) throw new Error("Usage: /playbook record [playbook-name]");
+          if (words.length > 0) throw new Error("Usage: /runbook record [runbook-name]");
           if (activeRun) throw new Error(`Run ${activeRun.runId} is already active. Finish or abort it before recording the surrounding session.`);
           await ctx.waitForIdle();
           const originalPrompt = firstUserText(ctx);
@@ -1089,27 +1089,27 @@ export default function playbooksExtension(pi: ExtensionAPI) {
             throw new Error("Recording an existing session requires an interactive confirmation because the whole active branch may be used.");
           }
           const confirmed = await ctx.ui.confirm(
-            "Record this session as a playbook?",
-            "Pi may infer the playbook from the entire current session so far—not only the latest task. That can include earlier instructions, tool usage across session branches, project-specific details, or sensitive information. Pi will try to generalize and redact the workflow, and nothing is approved for future runs until you approve the generated candidate. Continue?",
+            "Record this session as a runbook?",
+            "Pi may infer the runbook from the entire current session so far—not only the latest task. That can include earlier instructions, tool usage across session branches, project-specific details, or sensitive information. Pi will try to generalize and redact the workflow, and nothing is approved for future runs until you approve the generated candidate. Continue?",
           );
           if (!confirmed) return;
 
           while (!name) {
-            const entered = await ctx.ui.input("Name this reusable playbook", suggestedPlaybookName(originalPrompt));
+            const entered = await ctx.ui.input("Name this reusable runbook", suggestedRunbookName(originalPrompt));
             if (!entered?.trim()) return;
             name = entered.trim();
           }
           if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
-            throw new Error("Playbook names use lowercase letters, numbers, and single hyphens (for example: release-check)");
+            throw new Error("Runbook names use lowercase letters, numbers, and single hyphens (for example: release-check)");
           }
           if (await resolveNamed(name, artifacts, personal, team)) {
-            throw new Error(`An approved playbook named ${name} already exists. Choose a new name, or run it and let automatic learning improve it.`);
+            throw new Error(`An approved runbook named ${name} already exists. Choose a new name, or run it and let automatic learning improve it.`);
           }
 
           const release = await adHocRelease(name);
           const sessionFile = ctx.sessionManager.getSessionFile();
           const run = await runs.create({
-            playbookName: name,
+            runbookName: name,
             artifactDigest: release.digest,
             releaseScope: "explicit-digest",
             cwd: ctx.cwd,
@@ -1138,41 +1138,41 @@ export default function playbooksExtension(pi: ExtensionAPI) {
             sessionId: run.sessionId,
             artifactDigest: run.artifactDigest,
             ...(capturedLeaf ? { branchEntryId: capturedLeaf } : {}),
-            reason: "user confirmed conversion of the current session into a reusable playbook",
+            reason: "user confirmed conversion of the current session into a reusable runbook",
           });
           await startDraft(run.runId, undefined, ctx, "automatic", "record-session");
           return;
         }
         if (command === "seal") {
           const source = words[0];
-          if (!source) throw new Error("Usage: /playbook seal <source-directory>");
+          if (!source) throw new Error("Usage: /runbook seal <source-directory>");
           const manifest = await artifacts.seal(resolve(ctx.cwd, source));
           const theme = ctx.ui.theme;
           ctx.ui.notify([
             theme.fg("success", theme.bold(`Sealed ${manifest.contract.name}@${manifest.contract.version}`)),
             `Artifact: ${manifest.digest}`,
             "",
-            theme.fg("text", "For a new playbook, approve it with:"),
-            `  ${theme.fg("success", `/playbook promote ${manifest.digest}`)}`,
-            theme.fg("muted", "Updates to an approved playbook must go through the proposal review flow."),
+            theme.fg("text", "For a new runbook, approve it with:"),
+            `  ${theme.fg("success", `/runbook promote ${manifest.digest}`)}`,
+            theme.fg("muted", "Updates to an approved runbook must go through the proposal review flow."),
           ].join("\n"), "info");
           return;
         }
         if (command === "edit") {
           const name = words.shift();
-          if (!name || words.length > 1) throw new Error("Usage: /playbook edit <playbook-name> [destination]");
+          if (!name || words.length > 1) throw new Error("Usage: /runbook edit <runbook-name> [destination]");
           await createEditWorkspace(name, words[0], ctx);
           return;
         }
         if (command === "instruct") {
           const name = words.shift();
-          if (!name || words.length === 0) throw new Error("Usage: /playbook instruct <playbook-name> <instruction>");
+          if (!name || words.length === 0) throw new Error("Usage: /runbook instruct <runbook-name> <instruction>");
           await addPersistentInstruction(name, words.join(" "), ctx);
           return;
         }
         if (command === "draft") {
           const runId = words.shift();
-          if (!runId) throw new Error("Usage: /playbook draft <runId> [destination]");
+          if (!runId) throw new Error("Usage: /runbook draft <runId> [destination]");
           await startDraft(runId, words[0], ctx);
           return;
         }
@@ -1187,18 +1187,18 @@ export default function playbooksExtension(pi: ExtensionAPI) {
             runToken = words.shift();
           } else {
             const selector = words.shift();
-            if (!selector) throw new Error("Usage: /playbook propose <candidate>");
+            if (!selector) throw new Error("Usage: /runbook propose <candidate>");
             if (!ctx.isProjectTrusted()) throw new Error("Project candidate discovery requires a trusted project");
             const candidate = selectProjectCandidate(
-              await listProjectCandidates(join(ctx.cwd, CONFIG_DIR_NAME, "playbooks", "candidates")),
+              await listProjectCandidates(join(ctx.cwd, CONFIG_DIR_NAME, "runbooks", "candidates")),
               selector,
             );
-            if (!candidate) throw new Error(`No local candidate found for ${selector}. Use /playbook list to see candidate directory names.`);
+            if (!candidate) throw new Error(`No local candidate found for ${selector}. Use /runbook list to see candidate directory names.`);
             source = candidate.sourcePath;
             let evidenceRun = candidate.metadata ? await runs.read(candidate.metadata.runId) : undefined;
             if (!evidenceRun) {
               const conventionMatches = (await runs.list()).filter((run) =>
-                candidate.directoryName === `${run.playbookName}-${run.runId.slice(0, 8)}`,
+                candidate.directoryName === `${run.runbookName}-${run.runId.slice(0, 8)}`,
               );
               if (conventionMatches.length === 1) evidenceRun = conventionMatches[0];
             }
@@ -1206,12 +1206,12 @@ export default function playbooksExtension(pi: ExtensionAPI) {
             baseToken = candidate.metadata?.baseDigest ?? evidenceRun?.artifactDigest ?? currentRelease?.digest ?? "new";
             runToken = candidate.metadata?.runId ?? evidenceRun?.runId ?? "none";
           }
-          if (!source || !baseToken || !runToken) throw new Error("Usage: /playbook propose <candidate>");
+          if (!source || !baseToken || !runToken) throw new Error("Usage: /runbook propose <candidate>");
           const manifest = await artifacts.seal(resolve(ctx.cwd, source));
           const baseDigest = baseToken === "new" ? undefined : baseToken;
           if (baseDigest === manifest.digest) throw new Error("Candidate is byte-identical to its base artifact");
           const evidenceRunIds = runToken === "none" ? [] : [runToken];
-          let evidenceRun: PlaybookRun | undefined;
+          let evidenceRun: RunbookRun | undefined;
           if (runToken !== "none") {
             evidenceRun = await runs.read(runToken);
             if (baseDigest && evidenceRun.artifactDigest !== baseDigest) throw new Error("Evidence run was not assigned to the proposed base digest");
@@ -1242,26 +1242,26 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           const theme = ctx.ui.theme;
           ctx.ui.notify(lineageCurrent
             ? [
-                theme.fg("success", theme.bold(`Reusable playbook candidate ready: ${proposal.name}`)),
+                theme.fg("success", theme.bold(`Reusable runbook candidate ready: ${proposal.name}`)),
                 `Proposal ID: ${theme.fg("accent", proposal.proposalId)}`,
                 theme.fg("muted", proposal.rationale),
                 "",
                 theme.fg("text", "Review the candidate, then choose:"),
-                `  ${theme.fg("success", `/playbook promote ${proposal.proposalId}`)}`,
+                `  ${theme.fg("success", `/runbook promote ${proposal.proposalId}`)}`,
                 `    ${theme.fg("muted", "Approve it for future runs.")}`,
-                `  ${theme.fg("warning", `/playbook reject ${proposal.proposalId} <reason>`)}`,
-                `    ${theme.fg("muted", "Discard it without changing the approved playbook.")}`,
+                `  ${theme.fg("warning", `/runbook reject ${proposal.proposalId} <reason>`)}`,
+                `    ${theme.fg("muted", "Discard it without changing the approved runbook.")}`,
               ].join("\n")
             : [
                 theme.fg("warning", theme.bold(`Candidate is stale: ${proposal.name}`)),
                 `Proposal ID: ${proposal.proposalId}`,
-                theme.fg("muted", "The approved playbook changed after this candidate's base version. Regenerate or rebase it before promotion."),
+                theme.fg("muted", "The approved runbook changed after this candidate's base version. Regenerate or rebase it before promotion."),
               ].join("\n"), lineageCurrent ? "info" : "warning");
           return;
         }
         if (command === "reject") {
           const proposalId = words.shift();
-          if (!proposalId) throw new Error("Usage: /playbook reject <proposalId> [reason]");
+          if (!proposalId) throw new Error("Usage: /runbook reject <proposalId> [reason]");
           const proposal = await proposals.read(proposalId);
           assertProposalIsProposed(proposal, "reject");
           proposal.status = "rejected";
@@ -1270,14 +1270,14 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           const theme = ctx.ui.theme;
           ctx.ui.notify([
             theme.fg("warning", theme.bold(`Rejected proposal for ${proposal.name}`)),
-            theme.fg("muted", "The currently approved playbook was not changed."),
-            `View remaining playbooks and proposals with ${theme.fg("accent", "/playbook list")}`,
+            theme.fg("muted", "The currently approved runbook was not changed."),
+            `View remaining runbooks and proposals with ${theme.fg("accent", "/runbook list")}`,
           ].join("\n"), "warning");
           return;
         }
         if (command === "promote") {
           const token = words[0];
-          if (!token) throw new Error("Usage: /playbook promote <proposalId|digest>");
+          if (!token) throw new Error("Usage: /runbook promote <proposalId|digest>");
           const allProposals = await proposals.list();
           const proposal = allProposals.find((candidate) => candidate.proposalId === token || candidate.candidateDigest === token);
           if (proposal) assertProposalIsProposed(proposal, "promote");
@@ -1298,18 +1298,18 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           await ledger.append({ type: "PROMOTED", artifactDigest: digest, reason: `manual personal promotion of ${contract.name}`, data: proposal ? { proposalId: proposal.proposalId } : { bootstrap: true } });
           const theme = ctx.ui.theme;
           ctx.ui.notify([
-            theme.fg("success", theme.bold(`Playbook approved: ${contract.name}`)),
+            theme.fg("success", theme.bold(`Runbook approved: ${contract.name}`)),
             theme.fg("muted", `Version ${digest.slice(0, 12)}… is now used for future runs.`),
             "",
             theme.fg("text", "Run it again with:"),
-            `  ${theme.fg("success", `/playbook run ${contract.name}`)}`,
-            theme.fg("muted", "Use /playbook list whenever you need to find approved playbook names."),
+            `  ${theme.fg("success", `/runbook run ${contract.name}`)}`,
+            theme.fg("muted", "Use /runbook list whenever you need to find approved runbook names."),
           ].join("\n"), "info");
           return;
         }
         if (command === "rollback") {
           const name = words[0];
-          if (!name) throw new Error("Usage: /playbook rollback <name>");
+          if (!name) throw new Error("Usage: /runbook rollback <name>");
           const pointer = await personal.rollback(name);
           await ledger.append({ type: "ROLLED_BACK", artifactDigest: pointer.digest, reason: `manual rollback of ${name}` });
           ctx.ui.notify(`Rolled ${name} back to ${pointer.digest.slice(0, 12)}…; active runs remain pinned`, "warning");
@@ -1317,21 +1317,21 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         }
         if (command === "run") {
           const name = words.shift();
-          if (!name) throw new Error("Usage: /playbook run <playbook-name> [request]");
+          if (!name) throw new Error("Usage: /runbook run <runbook-name> [request]");
           let prompt = words.join(" ");
           let release = await resolveNamed(name, artifacts, personal, team)
             ?? await projectCandidateRelease(name, ctx);
           if (!release) {
             if (!prompt) {
               if (!ctx.hasUI) {
-                throw new Error(`No approved playbook or local candidate named ${name}. Provide a request to create an ad hoc workflow: /playbook run ${name} <request>`);
+                throw new Error(`No approved runbook or local candidate named ${name}. Provide a request to create an ad hoc workflow: /runbook run ${name} <request>`);
               }
               const theme = ctx.ui.theme;
               ctx.ui.notify([
-                theme.fg("accent", theme.bold(`No saved playbook named ${name}`)),
-                "Pi Playbooks can turn this run into a reproducible workflow.",
+                theme.fg("accent", theme.bold(`No saved runbook named ${name}`)),
+                "Pi Runbooks can turn this run into a reproducible workflow.",
                 "When you run it again, Pi can improve the workflow based on your new instructions and evidence from prior runs.",
-                theme.fg("muted", `Keep giving Pi instructions and feedback normally. Once the work is ready for review and you are done, close the playbook with ${theme.fg("success", "/playbook close")}.`),
+                theme.fg("muted", `Keep giving Pi instructions and feedback normally. Once the work is ready for review and you are done, close the runbook with ${theme.fg("success", "/runbook close")}.`),
                 "",
                 theme.fg("text", "Start by telling Pi what you want it to do."),
               ].join("\n"), "info");
@@ -1344,7 +1344,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
             }
             release = await adHocRelease(name);
           } else if (!prompt) {
-            prompt = `Run the ${name} playbook as written. Its procedure and the current working directory define the complete workflow; no additional request was supplied.`;
+            prompt = `Run the ${name} runbook as written. Its procedure and the current working directory define the complete workflow; no additional request was supplied.`;
           }
           const run = await createRun(release, prompt, ctx);
           notifyRunStarted(run, release, ctx);
@@ -1353,12 +1353,12 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         }
         if (command === "approve") {
           await approveGate(ctx);
-          ctx.ui.notify("Playbook gate approved. Send the next instruction or continue the workflow.", "info");
+          ctx.ui.notify("Runbook gate approved. Send the next instruction or continue the workflow.", "info");
           return;
         }
         if (command === "close") {
           if (!activeRun || activeRun.status !== "review" || !activeRun.completionReview) {
-            throw new Error("No playbook run is ready to close. Complete the work and wait for Pi to submit it for review first.");
+            throw new Error("No runbook run is ready to close. Complete the work and wait for Pi to submit it for review first.");
           }
           const completedRun = await closeReviewedRun(ctx);
           await startDraft(completedRun.runId, undefined, ctx, "automatic");
@@ -1366,7 +1366,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
         }
         if (command === "resume") {
           const runId = words[0];
-          if (!runId) throw new Error("Usage: /playbook resume <runId>");
+          if (!runId) throw new Error("Usage: /runbook resume <runId>");
           if (activeRun) throw new Error(`Run ${activeRun.runId} is already active`);
           const run = await runs.read(runId);
           if (run.status !== "running" && run.status !== "paused" && run.status !== "review") throw new Error(`Run is terminal: ${run.status}`);
@@ -1376,31 +1376,31 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           await appendFact(ctx, { type: "RUN_RESUMED", reason: "explicitly attached to this Pi session" });
           const theme = ctx.ui.theme;
           ctx.ui.notify([
-            theme.fg("success", theme.bold(`Resumed ${run.playbookName}`)),
+            theme.fg("success", theme.bold(`Resumed ${run.runbookName}`)),
             `Run ID: ${theme.fg("accent", run.runId)}`,
             `Status: ${run.status} · Stage: ${run.currentStage ?? "not set"}`,
             run.pendingGate
-              ? theme.fg("warning", `Waiting for approval: ${run.pendingGate.prompt}\nUse /playbook approve to continue.`)
+              ? theme.fg("warning", `Waiting for approval: ${run.pendingGate.prompt}\nUse /runbook approve to continue.`)
               : run.status === "review"
-                ? theme.fg("accent", "This run is ready for review. Ask follow-up questions, request changes, or use /playbook close when satisfied.")
-                : theme.fg("muted", "Continue the workflow in this session. Use /playbook status to check progress."),
+                ? theme.fg("accent", "This run is ready for review. Ask follow-up questions, request changes, or use /runbook close when satisfied.")
+                : theme.fg("muted", "Continue the workflow in this session. Use /runbook status to check progress."),
           ].join("\n"), "info");
           return;
         }
         if (command === "abort") {
-          if (!activeRun) throw new Error("No active playbook run");
+          if (!activeRun) throw new Error("No active runbook run");
           activeRun.status = "abandoned";
           delete activeRun.pendingGate;
           delete activeRun.completionReview;
           await runs.save(activeRun);
           await appendFact(ctx, { type: "RUN_ABANDONED", reason: words.join(" ") || "manually abandoned" });
           await setActive(undefined, ctx);
-          ctx.ui.notify("Playbook run abandoned", "warning");
+          ctx.ui.notify("Runbook run abandoned", "warning");
           return;
         }
         if (command === "verify") {
           const digest = words[0] ?? activeRun?.artifactDigest;
-          if (!digest) throw new Error("Usage: /playbook verify <digest>");
+          if (!digest) throw new Error("Usage: /runbook verify <digest>");
           await artifacts.verify(digest);
           ctx.ui.notify(`Artifact verified: ${digest}`, "info");
           return;
@@ -1410,17 +1410,17 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           const teamData = await team?.read();
           const proposalData = await proposals.list();
           const projectCandidates = ctx.isProjectTrusted()
-            ? await listProjectCandidates(join(ctx.cwd, CONFIG_DIR_NAME, "playbooks", "candidates"))
+            ? await listProjectCandidates(join(ctx.cwd, CONFIG_DIR_NAME, "runbooks", "candidates"))
             : [];
           const theme = ctx.ui.theme;
-          const lines: string[] = [theme.fg("accent", theme.bold("Approved playbooks"))];
+          const lines: string[] = [theme.fg("accent", theme.bold("Approved runbooks"))];
           const addReleases = async (scope: string, releases: typeof registry.releases) => {
             for (const [name, pointer] of Object.entries(releases)) {
               const contract = await artifacts.contract(pointer.digest);
               lines.push(
                 `  ${theme.fg("success", theme.bold(name))} ${theme.fg("muted", `(${scope}, ${pointer.digest.slice(0, 12)}…)`)}`,
                 `    ${contract.description}`,
-                `    ${theme.fg("accent", `/playbook run ${name}`)} ${theme.fg("muted", "[optional request]")}`,
+                `    ${theme.fg("accent", `/runbook run ${name}`)} ${theme.fg("muted", "[optional request]")}`,
               );
             }
           };
@@ -1428,8 +1428,8 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           if (teamData) await addReleases("team", teamData.releases);
           if (Object.keys(registry.releases).length === 0 && (!teamData || Object.keys(teamData.releases).length === 0)) {
             lines.push(
-              `  ${theme.fg("muted", "No approved playbooks yet.")}`,
-              `  Start a workflow with ${theme.fg("accent", "/playbook")} and follow the save instructions when it finishes.`,
+              `  ${theme.fg("muted", "No approved runbooks yet.")}`,
+              `  Start a workflow with ${theme.fg("accent", "/runbook")} and follow the save instructions when it finishes.`,
             );
           }
 
@@ -1444,7 +1444,7 @@ export default function playbooksExtension(pi: ExtensionAPI) {
                   `  ${theme.fg("warning", theme.bold(candidate.contract.name))} ${theme.fg("muted", `v${candidate.contract.version} · editable, not submitted`)}`,
                   `    ${candidate.contract.description}`,
                   `    ${theme.fg("muted", `Directory: ${candidate.directoryName} · ${displayPath}`)}`,
-                  `    ${theme.fg("accent", `/playbook propose ${candidate.directoryName}`)}`,
+                  `    ${theme.fg("accent", `/runbook propose ${candidate.directoryName}`)}`,
                 );
               } else {
                 lines.push(
@@ -1469,8 +1469,8 @@ export default function playbooksExtension(pi: ExtensionAPI) {
               );
               if (proposal.status === "proposed") {
                 lines.push(
-                  `    ${theme.fg("success", `/playbook promote ${proposal.proposalId}`)}`,
-                  `    ${theme.fg("warning", `/playbook reject ${proposal.proposalId} <reason>`)}`,
+                  `    ${theme.fg("success", `/runbook promote ${proposal.proposalId}`)}`,
+                  `    ${theme.fg("warning", `/runbook reject ${proposal.proposalId} <reason>`)}`,
                 );
               }
             }
@@ -1478,11 +1478,11 @@ export default function playbooksExtension(pi: ExtensionAPI) {
           ctx.ui.notify(lines.join("\n"), "info");
           return;
         }
-        if (command !== "status") throw new Error(`Unknown playbook command: ${command}`);
+        if (command !== "status") throw new Error(`Unknown runbook command: ${command}`);
         if (activeRun) {
           const theme = ctx.ui.theme;
           const lines = [
-            theme.fg("accent", theme.bold(activeRun.playbookName)),
+            theme.fg("accent", theme.bold(activeRun.runbookName)),
             `Run ID: ${activeRun.runId}`,
             `Status: ${activeRun.status} · Stage: ${activeRun.currentStage ?? "not set"}`,
             `Artifact: ${activeRun.artifactDigest.slice(0, 12)}…`,
@@ -1491,27 +1491,27 @@ export default function playbooksExtension(pi: ExtensionAPI) {
             lines.push(
               "",
               theme.fg("warning", `Waiting for your approval: ${activeRun.pendingGate.prompt}`),
-              `Continue with ${theme.fg("success", "/playbook approve")}`,
+              `Continue with ${theme.fg("success", "/runbook approve")}`,
             );
           } else if (activeRun.status === "review") {
             lines.push(
               "",
               theme.fg("accent", "The proposed result is ready for review."),
-              theme.fg("text", "Ask follow-up questions or request changes; the pinned playbook and its safety policy stay active."),
-              `Close only when satisfied: ${theme.fg("success", "/playbook close")}`,
-              theme.fg("muted", `If you change sessions: /playbook resume ${activeRun.runId}`),
+              theme.fg("text", "Ask follow-up questions or request changes; the pinned runbook and its safety policy stay active."),
+              `Close only when satisfied: ${theme.fg("success", "/runbook close")}`,
+              theme.fg("muted", `If you change sessions: /runbook resume ${activeRun.runId}`),
             );
           } else {
-            lines.push("", theme.fg("muted", `If you change sessions, continue with /playbook resume ${activeRun.runId}`));
+            lines.push("", theme.fg("muted", `If you change sessions, continue with /runbook resume ${activeRun.runId}`));
           }
           ctx.ui.notify(lines.join("\n"), "info");
         } else {
           const theme = ctx.ui.theme;
           ctx.ui.notify([
-            theme.fg("muted", "No playbook run is active."),
-            `Start interactively: ${theme.fg("accent", "/playbook")}`,
-            `View reusable playbooks: ${theme.fg("accent", "/playbook list")}`,
-            `Run one by name: ${theme.fg("accent", "/playbook run <playbook-name> [request]")}`,
+            theme.fg("muted", "No runbook run is active."),
+            `Start interactively: ${theme.fg("accent", "/runbook")}`,
+            `View reusable runbooks: ${theme.fg("accent", "/runbook list")}`,
+            `Run one by name: ${theme.fg("accent", "/runbook run <runbook-name> [request]")}`,
           ].join("\n"), "info");
         }
       } catch (error) {

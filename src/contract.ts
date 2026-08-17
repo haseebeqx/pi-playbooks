@@ -1,6 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { ApplicabilityContract, PlaybookContract } from "./types.js";
+import type { ApplicabilityContract, RunbookContract } from "./types.js";
 import { CONTRACT_SCHEMA_VERSION } from "./types.js";
 import { exists, resolveInside } from "./io.js";
 
@@ -21,8 +21,8 @@ function safeRelativePath(value: unknown, label: string): string {
   return value;
 }
 
-export function validateContract(value: unknown): PlaybookContract {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("playbook.json must contain an object");
+export function validateContract(value: unknown): RunbookContract {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("runbook.json must contain an object");
   const input = value as Record<string, unknown>;
   if (input.schemaVersion !== CONTRACT_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${CONTRACT_SCHEMA_VERSION}`);
   if (typeof input.name !== "string" || !NAME_PATTERN.test(input.name)) throw new Error("name must use lowercase letters, numbers, and single hyphens");
@@ -58,7 +58,7 @@ export function validateContract(value: unknown): PlaybookContract {
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`artifacts[${index}] must be an object`);
       const item = raw as Record<string, unknown>;
       if (typeof item.name !== "string" || !item.name.trim()) throw new Error(`artifacts[${index}].name is required`);
-      const result: NonNullable<PlaybookContract["artifacts"]>[number] = {
+      const result: NonNullable<RunbookContract["artifacts"]>[number] = {
         name: item.name,
         path: safeRelativePath(item.path, `artifacts[${index}].path`),
       };
@@ -74,7 +74,7 @@ export function validateContract(value: unknown): PlaybookContract {
     });
   })();
 
-  const successPredicates: PlaybookContract["successPredicates"] = input.successPredicates === undefined ? undefined : (() => {
+  const successPredicates: RunbookContract["successPredicates"] = input.successPredicates === undefined ? undefined : (() => {
     if (!Array.isArray(input.successPredicates)) throw new Error("successPredicates must be an array");
     return input.successPredicates.map((raw, index) => {
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`successPredicates[${index}] must be an object`);
@@ -84,7 +84,7 @@ export function validateContract(value: unknown): PlaybookContract {
     });
   })();
 
-  let evidencePolicy: PlaybookContract["evidencePolicy"];
+  let evidencePolicy: RunbookContract["evidencePolicy"];
   if (input.evidencePolicy !== undefined) {
     if (!input.evidencePolicy || typeof input.evidencePolicy !== "object" || Array.isArray(input.evidencePolicy)) throw new Error("evidencePolicy must be an object");
     const raw = input.evidencePolicy as Record<string, unknown>;
@@ -101,7 +101,7 @@ export function validateContract(value: unknown): PlaybookContract {
     }
   }
 
-  let runtime: PlaybookContract["runtime"];
+  let runtime: RunbookContract["runtime"];
   if (input.runtime !== undefined) {
     if (!input.runtime || typeof input.runtime !== "object" || Array.isArray(input.runtime)) throw new Error("runtime must be an object");
     const raw = input.runtime as Record<string, unknown>;
@@ -112,7 +112,7 @@ export function validateContract(value: unknown): PlaybookContract {
     }
   }
 
-  const result: PlaybookContract = {
+  const result: RunbookContract = {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     name: input.name,
     version: input.version,
@@ -136,7 +136,7 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${escaped}$`);
 }
 
-export async function isApplicable(contract: PlaybookContract, cwd: string): Promise<{ matches: boolean; reason: string }> {
+export async function isApplicable(contract: RunbookContract, cwd: string): Promise<{ matches: boolean; reason: string }> {
   const applicability = contract.applicability;
   if (!applicability) return { matches: true, reason: "no applicability restrictions" };
   const normalized = resolve(cwd).replaceAll("\\", "/");

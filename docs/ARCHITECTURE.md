@@ -6,11 +6,11 @@ The package retains the original three-plane design.
 
 Implemented in `0.0.1`:
 
-- fixed artifact assignment for a long-lived playbook run;
-- approved named playbooks started as self-contained workflows with `/playbook run <name>`, with an optional request to refine their scope;
+- fixed artifact assignment for a long-lived runbook run;
+- approved named runbooks started as self-contained workflows with `/runbook run <name>`, with an optional request to refine their scope;
 - trusted project candidates resolved by contract or directory name, sealed into immutable snapshots, and run without promotion or an additional request;
-- ad hoc governed runs created interactively with `/playbook` or `/playbook run <name>`, which prompts for a missing request, or explicitly with `/playbook run <name> <request>`, without a pre-existing procedure or skill;
-- a mandatory user-selected name collected before assignment, with no hidden or temporary playbook records;
+- ad hoc governed runs created interactively with `/runbook` or `/runbook run <name>`, which prompts for a missing request, or explicitly with `/runbook run <name> <request>`, without a pre-existing procedure or skill;
+- a mandatory user-selected name collected before assignment, with no hidden or temporary runbook records;
 - personal-over-team deterministic resolution;
 - no implicit applicability conflict winner;
 - content verification before prompt injection and tool authorization, including re-derivation of contract and procedure metadata from hashed content;
@@ -19,7 +19,7 @@ Implemented in `0.0.1`:
 - declared effect classes;
 - one-action approval for selected high-risk operations;
 - workflow approval gates;
-- a non-terminal review state that keeps the pinned playbook and policy active for follow-up questions and changes until explicit user closure;
+- a non-terminal review state that keeps the pinned runbook and policy active for follow-up questions and changes until explicit user closure;
 - PROPOSED, AUTHORIZED, BLOCKED, USER_REJECTED, SUCCEEDED, and FAILED facts;
 - explicit scope statement for observed and unmediated effects.
 
@@ -45,9 +45,9 @@ Implemented foundations:
 - automatic handoff of supported candidates to deterministic release evaluation;
 - no causal claims from ordinary executions.
 
-Candidate extraction is intentionally agent-assisted: closing a reviewed run automatically supplies a minimized trajectory and an editable copy of the sealed base to the learning turn. Manual `/playbook draft` remains available as an advanced fallback. Learning also transiently summarizes bash commands observed during the run, grouped with success/failure counts. Raw command output and non-command arguments are excluded, likely inline credentials are redacted, and raw commands are not added to the fact ledger. The learning instructions may preserve a consolidated command or add a helper script only when this execution evidence supports the optimization; a successful observation is not treated as a causal or universal claim.
+Candidate extraction is intentionally agent-assisted: closing a reviewed run automatically supplies a minimized trajectory and an editable copy of the sealed base to the learning turn. Manual `/runbook draft` remains available as an advanced fallback. Learning also transiently summarizes bash commands observed during the run, grouped with success/failure counts. Raw command output and non-command arguments are excluded, likely inline credentials are redacted, and raw commands are not added to the fact ledger. The learning instructions may preserve a consolidated command or add a helper script only when this execution evidence supports the optimization; a successful observation is not treated as a causal or universal claim.
 
-The workspace stores local base/run provenance and whether the workflow is automatic or manual. This metadata is excluded from the sealed artifact. Automatic learning submits its candidate through `playbook_complete_learning`; manual `/playbook propose` remains available without requiring users to supply internal digests. A proposal has no activation authority: deterministic checks and explicit human approval occur before the personal release pointer changes.
+The workspace stores local base/run provenance and whether the workflow is automatic or manual. This metadata is excluded from the sealed artifact. Automatic learning submits its candidate through `runbook_complete_learning`; manual `/runbook propose` remains available without requiring users to supply internal digests. A proposal has no activation authority: deterministic checks and explicit human approval occur before the personal release pointer changes.
 
 ## Release / governance plane
 

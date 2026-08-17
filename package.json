@@ -1,7 +1,7 @@
 {
-  "name": "@haseebeqx/pi-playbooks",
-  "version": "0.1.2",
-  "description": "Governed, self-improving playbook runtime for Pi",
+  "name": "@haseebeqx/pi-runbooks",
+  "version": "0.2.0",
+  "description": "Versioned, governed, self-improving runbooks for Pi",
   "type": "module",
   "license": "MIT",
   "author": "Haseeb",
@@ -10,17 +10,17 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/haseebeqx/pi-playbooks.git"
+    "url": "git+https://github.com/haseebeqx/pi-runbooks.git"
   },
-  "homepage": "https://github.com/haseebeqx/pi-playbooks#readme",
+  "homepage": "https://github.com/haseebeqx/pi-runbooks#readme",
   "bugs": {
-    "url": "https://github.com/haseebeqx/pi-playbooks/issues"
+    "url": "https://github.com/haseebeqx/pi-runbooks/issues"
   },
   "keywords": [
     "pi-package",
     "pi",
     "agent-skills",
-    "playbooks",
+    "runbooks",
     "self-improvement"
   ],
   "files": [
@@ -33,7 +33,7 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/playbooks.ts"
+      "./extensions/runbooks.ts"
     ]
   },
   "scripts": {

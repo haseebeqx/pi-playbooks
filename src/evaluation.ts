@@ -1,5 +1,5 @@
 import type { ArtifactStore } from "./artifacts.js";
-import type { ArtifactManifest, PlaybookRun } from "./types.js";
+import type { ArtifactManifest, RunbookRun } from "./types.js";
 
 export interface ArtifactChanges {
   added: string[];
@@ -30,7 +30,7 @@ export function artifactChanges(base: ArtifactManifest, candidate: ArtifactManif
 
 export async function evaluateCandidate(
   artifacts: ArtifactStore,
-  run: PlaybookRun,
+  run: RunbookRun,
   candidateDigest: string,
 ): Promise<CandidateEvaluation> {
   await artifacts.verify(run.artifactDigest);
@@ -53,11 +53,11 @@ export async function evaluateCandidate(
       reason: base.digest === run.artifactDigest ? "candidate was derived from the assigned base" : "base digest does not match the evidence run",
     },
     {
-      name: "playbook identity",
-      passed: candidate.contract.name === run.playbookName,
-      reason: candidate.contract.name === run.playbookName
-        ? `candidate remains ${run.playbookName}`
-        : `candidate changed name from ${run.playbookName} to ${candidate.contract.name}`,
+      name: "runbook identity",
+      passed: candidate.contract.name === run.runbookName,
+      reason: candidate.contract.name === run.runbookName
+        ? `candidate remains ${run.runbookName}`
+        : `candidate changed name from ${run.runbookName} to ${candidate.contract.name}`,
     },
     {
       name: "material change",

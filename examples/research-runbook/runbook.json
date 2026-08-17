@@ -4,14 +4,14 @@
   "version": "0.1.0",
   "description": "Example multi-turn research workflow with a reviewed plan and durable outputs",
   "invocation": "explicit",
-  "procedure": "PLAYBOOK.md",
+  "procedure": "RUNBOOK.md",
   "applicability": {},
   "requiredCapabilities": [
     "read",
     "write",
     "bash",
-    "playbook_checkpoint",
-    "playbook_finish"
+    "runbook_checkpoint",
+    "runbook_finish"
   ],
   "allowedEffectClasses": [
     "filesystem.read",

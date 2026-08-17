@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { canonicalJson } from "./io.js";
-import type { EnforcementLevel, PlaybookContract, ToolAttestation } from "./types.js";
+import type { EnforcementLevel, RunbookContract, ToolAttestation } from "./types.js";
 
 export const POLICY_VERSION = "0.0.1";
 
@@ -52,7 +52,7 @@ export function effectClassFor(toolName: string): string {
   if (["read", "grep", "find", "ls"].includes(toolName)) return "filesystem.read";
   if (["write", "edit"].includes(toolName)) return "filesystem.write";
   if (toolName === "bash") return "process.exec";
-  if (toolName.startsWith("playbook_")) return "governance";
+  if (toolName.startsWith("runbook_")) return "governance";
   return `tool:${toolName}`;
 }
 
@@ -72,11 +72,11 @@ function highRiskReason(toolName: string, input: Record<string, unknown>): strin
   return undefined;
 }
 
-export function decide(contract: PlaybookContract, toolName: string, input: Record<string, unknown>): PolicyDecision {
+export function decide(contract: RunbookContract, toolName: string, input: Record<string, unknown>): PolicyDecision {
   const effectClass = effectClassFor(toolName);
   const allowed = contract.allowedEffectClasses.includes("*") || contract.allowedEffectClasses.includes(effectClass);
-  const enforcementLevel: EnforcementLevel = toolName.startsWith("playbook_") ? "guarded" : "observed";
-  if (!allowed) return { decision: "deny", effectClass, enforcementLevel, reason: `${effectClass} is not declared by the playbook` };
+  const enforcementLevel: EnforcementLevel = toolName.startsWith("runbook_") ? "guarded" : "observed";
+  if (!allowed) return { decision: "deny", effectClass, enforcementLevel, reason: `${effectClass} is not declared by the runbook` };
   const approvalReason = highRiskReason(toolName, input);
   if (approvalReason) return { decision: "require_approval", effectClass, enforcementLevel, reason: approvalReason };
   return { decision: "allow", effectClass, enforcementLevel, reason: `${effectClass} is declared` };

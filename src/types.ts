@@ -28,7 +28,7 @@ export interface EvidencePolicy {
   promotionLevels?: EnforcementLevel[];
 }
 
-export interface PlaybookContract {
+export interface RunbookContract {
   schemaVersion: typeof CONTRACT_SCHEMA_VERSION;
   name: string;
   version: string;
@@ -58,7 +58,7 @@ export interface ArtifactManifest {
   schemaVersion: 1;
   digest: string;
   sealedAt: string;
-  contract: PlaybookContract;
+  contract: RunbookContract;
   procedurePath: string;
   files: ArtifactFile[];
 }
@@ -80,11 +80,11 @@ export interface ToolAttestation {
   fingerprint: string;
 }
 
-export interface PlaybookRun {
+export interface RunbookRun {
   schemaVersion: 1;
   runId: string;
   assignmentId: string;
-  playbookName: string;
+  runbookName: string;
   artifactDigest: string;
   releaseScope: RunReleaseScope;
   status: RunStatus;

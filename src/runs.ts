@@ -2,10 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWriteJson, exists, readJson, resolveExistingInside } from "./io.js";
-import type { PlaybookContract, PlaybookRun, PredicateResult, RunReleaseScope, ToolAttestation } from "./types.js";
+import type { RunbookContract, RunbookRun, PredicateResult, RunReleaseScope, ToolAttestation } from "./types.js";
 
 export interface StartRunInput {
-  playbookName: string;
+  runbookName: string;
   artifactDigest: string;
   releaseScope: RunReleaseScope;
   cwd: string;
@@ -28,13 +28,13 @@ export class RunStore {
     return join(this.root, `${runId}.json`);
   }
 
-  async create(input: StartRunInput): Promise<PlaybookRun> {
+  async create(input: StartRunInput): Promise<RunbookRun> {
     const now = new Date().toISOString();
-    const run: PlaybookRun = {
+    const run: RunbookRun = {
       schemaVersion: 1,
       runId: randomUUID(),
       assignmentId: randomUUID(),
-      playbookName: input.playbookName,
+      runbookName: input.runbookName,
       artifactDigest: input.artifactDigest,
       releaseScope: input.releaseScope,
       status: "running",
@@ -51,28 +51,28 @@ export class RunStore {
     return run;
   }
 
-  async read(runId: string): Promise<PlaybookRun> {
-    const run = await readJson<PlaybookRun>(this.path(runId));
+  async read(runId: string): Promise<RunbookRun> {
+    const run = await readJson<RunbookRun>(this.path(runId));
     if (run.schemaVersion !== 1 || run.runId !== runId) throw new Error(`Invalid run record: ${runId}`);
     return run;
   }
 
-  async save(run: PlaybookRun): Promise<void> {
+  async save(run: RunbookRun): Promise<void> {
     run.updatedAt = new Date().toISOString();
     await atomicWriteJson(this.path(run.runId), run);
   }
 
-  async list(): Promise<PlaybookRun[]> {
+  async list(): Promise<RunbookRun[]> {
     if (!await exists(this.root)) return [];
     const files = (await readdir(this.root)).filter((name) => name.endsWith(".json"));
-    return Promise.all(files.map((name) => readJson<PlaybookRun>(join(this.root, name))));
+    return Promise.all(files.map((name) => readJson<RunbookRun>(join(this.root, name))));
   }
 
-  async activeForSession(sessionId: string): Promise<PlaybookRun[]> {
+  async activeForSession(sessionId: string): Promise<RunbookRun[]> {
     return (await this.list()).filter((run) => run.sessionId === sessionId && (run.status === "running" || run.status === "paused" || run.status === "review"));
   }
 
-  async attach(run: PlaybookRun, sessionId: string, sessionFile?: string): Promise<void> {
+  async attach(run: RunbookRun, sessionId: string, sessionFile?: string): Promise<void> {
     run.sessionId = sessionId;
     if (sessionFile) run.sessionFile = sessionFile;
     else delete run.sessionFile;
@@ -80,7 +80,7 @@ export class RunStore {
   }
 }
 
-export async function evaluatePredicates(contract: PlaybookContract, cwd: string): Promise<PredicateResult[]> {
+export async function evaluatePredicates(contract: RunbookContract, cwd: string): Promise<PredicateResult[]> {
   const results: PredicateResult[] = [];
   for (const predicate of contract.successPredicates ?? []) {
     try {

@@ -3,7 +3,7 @@ import { chmod, copyFile, lstat, mkdir, readdir, readFile, stat } from "node:fs/
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { validateContract } from "./contract.js";
 import { atomicWriteJson, canonicalJson, exists, readJson, replaceDirectory, resolveInside } from "./io.js";
-import type { ArtifactFile, ArtifactManifest, PlaybookContract } from "./types.js";
+import type { ArtifactFile, ArtifactManifest, RunbookContract } from "./types.js";
 import { CANDIDATE_METADATA_FILE } from "./candidates.js";
 
 const OMIT_NAMES = new Set([".git", ".DS_Store", CANDIDATE_METADATA_FILE]);
@@ -51,21 +51,21 @@ async function copyContent(source: string, destination: string, files: ArtifactF
   }
 }
 
-async function resolveProcedurePath(source: string, contract: PlaybookContract): Promise<string> {
-  const candidates = contract.procedure ? [contract.procedure] : ["PLAYBOOK.md", "SKILL.md"];
+async function resolveProcedurePath(source: string, contract: RunbookContract): Promise<string> {
+  const candidates = contract.procedure ? [contract.procedure] : ["RUNBOOK.md", "SKILL.md"];
   for (const candidate of candidates) {
     const path = resolveInside(source, candidate);
     if (!await exists(path)) continue;
     const info = await lstat(path);
-    if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Playbook procedure must be a regular file: ${candidate}`);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Runbook procedure must be a regular file: ${candidate}`);
     return candidate;
   }
   throw new Error(contract.procedure
     ? `Declared procedure is missing: ${contract.procedure}`
-    : "Playbook source needs PLAYBOOK.md or SKILL.md");
+    : "Runbook source needs RUNBOOK.md or SKILL.md");
 }
 
-async function validateSkillDependencies(source: string, contract: PlaybookContract): Promise<void> {
+async function validateSkillDependencies(source: string, contract: RunbookContract): Promise<void> {
   for (const dependency of contract.skillDependencies ?? []) {
     const root = resolveInside(source, dependency);
     if (!await exists(root) || !(await lstat(root)).isDirectory()) {
@@ -96,9 +96,9 @@ export class ArtifactStore {
 
   async seal(sourceDirectory: string): Promise<ArtifactManifest> {
     const source = resolve(sourceDirectory);
-    if (!(await stat(source)).isDirectory()) throw new Error("Playbook source must be a directory");
-    const contractPath = join(source, "playbook.json");
-    if (!await exists(contractPath)) throw new Error("Playbook source is missing playbook.json");
+    if (!(await stat(source)).isDirectory()) throw new Error("Runbook source must be a directory");
+    const contractPath = join(source, "runbook.json");
+    if (!await exists(contractPath)) throw new Error("Runbook source is missing runbook.json");
     const contract = validateContract(await readJson<unknown>(contractPath));
     const procedurePath = await resolveProcedurePath(source, contract);
     await validateSkillDependencies(source, contract);
@@ -134,7 +134,7 @@ export class ArtifactStore {
     if (value.digest !== digest) throw new Error("Manifest digest does not match artifact location");
     value.contract = validateContract(value.contract);
     if (!value.procedurePath) {
-      const fallback = [value.contract.procedure, "PLAYBOOK.md", "SKILL.md"]
+      const fallback = [value.contract.procedure, "RUNBOOK.md", "SKILL.md"]
         .filter((path): path is string => Boolean(path))
         .find((path) => value.files.some((file) => file.path === path));
       if (fallback) value.procedurePath = fallback;
@@ -145,7 +145,7 @@ export class ArtifactStore {
     return value;
   }
 
-  async contract(digest: string): Promise<PlaybookContract> {
+  async contract(digest: string): Promise<RunbookContract> {
     return (await this.manifest(digest)).contract;
   }
 
@@ -178,7 +178,7 @@ export class ArtifactStore {
       throw new Error(`Artifact integrity check failed for ${digest}`);
     }
 
-    const contentContract = validateContract(await readJson<unknown>(join(content, "playbook.json")));
+    const contentContract = validateContract(await readJson<unknown>(join(content, "runbook.json")));
     const manifestContract = validateContract(manifest.contract);
     const procedurePath = await resolveProcedurePath(content, contentContract);
     await validateSkillDependencies(content, contentContract);
