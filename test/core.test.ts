@@ -277,6 +277,58 @@ test("project candidate workspaces are discovered with provenance and invalid en
   assert.match(candidates[1]?.error ?? "", /missing runbook.json/);
 });
 
+test("runbook list is concise by default and exposes details on request", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-list-"));
+  const home = join(root, "home");
+  const candidate = join(root, ".pi", "runbooks", "candidates", "research-draft");
+  await mkdir(candidate, { recursive: true });
+  await writeFile(join(candidate, "runbook.json"), JSON.stringify(contract({ name: "research-draft", version: "0.2.0" })));
+  const proposal = await new ProposalStore(home).create({
+    name: "review-process",
+    candidateDigest: "a".repeat(64),
+    evidenceRunIds: [],
+    rationale: "A long internal explanation that belongs in the detailed view.",
+  });
+
+  let handler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
+  const previousHome = process.env.PI_RUNBOOKS_HOME;
+  process.env.PI_RUNBOOKS_HOME = home;
+  try {
+    runbooksExtension({
+      on: () => {},
+      registerTool: () => {},
+      registerCommand: (_name: string, options: { handler: typeof handler }) => { handler = options.handler; },
+    } as unknown as ExtensionAPI);
+  } finally {
+    if (previousHome === undefined) delete process.env.PI_RUNBOOKS_HOME;
+    else process.env.PI_RUNBOOKS_HOME = previousHome;
+  }
+  assert.ok(handler);
+
+  const notices: string[] = [];
+  const ctx = {
+    cwd: root,
+    isProjectTrusted: () => true,
+    ui: {
+      notify: (message: string) => { notices.push(message); },
+      theme: { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+    },
+  };
+  await handler("list", ctx);
+  const concise = notices.pop() ?? "";
+  assert.match(concise, /research-draft · v0\.2\.0 · editable/);
+  assert.match(concise, /review-process · proposed/);
+  assert.match(concise, /\/runbook list --details/);
+  assert.doesNotMatch(concise, /Directory:|Proposal ID:|long internal explanation|\/runbook promote/);
+
+  await handler("list --details", ctx);
+  const detailed = notices.pop() ?? "";
+  assert.match(detailed, /Directory: research-draft/);
+  assert.match(detailed, new RegExp(`Proposal ID: ${proposal.proposalId}`));
+  assert.match(detailed, /long internal explanation/);
+  assert.match(detailed, /\/runbook promote/);
+});
+
 test("project candidates resolve by contract name or exact directory without requiring approval", () => {
   const parsed = validateContract(contract({ name: "review-process" }));
   const candidates = [

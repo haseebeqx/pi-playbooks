@@ -56,7 +56,7 @@ const COMMAND_HELP: ReadonlyArray<readonly [name: string, usage: string, descrip
   ["from-skill", "from-skill <skill-name|directory> [destination]", "Convert a loaded Pi Agent Skill into an editable runbook candidate."],
   ["to-skill", "to-skill <runbook-name> [destination]", "Export an approved runbook as a standalone Pi Agent Skill."],
   ["status", "status", "Show the active run, current stage, and status."],
-  ["list", "list", "List approved runbooks, project candidate workspaces, and submitted proposals."],
+  ["list", "list [--details]", "List runbook names and statuses; use --details for paths, IDs, and actions."],
   ["edit", "edit <runbook-name> [destination]", "Create an editable candidate from the currently approved release."],
   ["instruct", "instruct <runbook-name> <instruction>", "Add a persistent instruction and request approval for future runs."],
   ["approve", "approve", "Approve the workflow gate currently waiting for your decision."],
@@ -168,18 +168,23 @@ export default function runbooksExtension(pi: ExtensionAPI) {
   const setActive = async (run: RunbookRun | undefined, ctx: ExtensionContext) => {
     activeRun = run;
     activeContract = run ? await artifacts.contract(run.artifactDigest) : undefined;
-    ctx.ui.setStatus("pi-runbooks", run ? `runbook: ${run.runbookName} (${run.status})` : undefined);
+    const status = !run
+      ? undefined
+      : run.pendingGate
+        ? `runbook: ${run.runbookName} · approval required`
+        : run.status === "review"
+          ? `runbook: ${run.runbookName} · ready for review · /runbook close`
+          : `runbook: ${run.runbookName} · ${run.status}`;
+    ctx.ui.setStatus("pi-runbooks", status);
+
+    // Approval gates need the user's immediate attention. Review state does not:
+    // the result is already in the conversation, so keep only a compact footer
+    // reminder and let /runbook status provide details on demand.
     if (run?.pendingGate) {
       ctx.ui.setWidget("pi-runbooks-approval", [
         `Approval required · ${run.runbookName}`,
         run.pendingGate.prompt,
         "Use /runbook approve to continue, or send a message describing the changes you want.",
-      ]);
-    } else if (run?.status === "review" && run.completionReview) {
-      ctx.ui.setWidget("pi-runbooks-approval", [
-        `Ready for review · ${run.runbookName}`,
-        run.completionReview.summary,
-        "Ask for changes normally, or use /runbook close when satisfied.",
       ]);
     } else {
       ctx.ui.setWidget("pi-runbooks-approval", undefined);
@@ -1463,6 +1468,10 @@ export default function runbooksExtension(pi: ExtensionAPI) {
           return;
         }
         if (command === "list") {
+          const details = words.length === 1 && ["--details", "--verbose", "-v"].includes(words[0] ?? "");
+          if (words.length > (details ? 1 : 0)) throw new Error("Usage: /runbook list [--details]");
+          if (words.length === 1 && !details) throw new Error("Usage: /runbook list [--details]");
+
           const registry = await personal.read();
           const teamData = await team?.read();
           const proposalData = await proposals.list();
@@ -1470,68 +1479,78 @@ export default function runbooksExtension(pi: ExtensionAPI) {
             ? await listProjectCandidates(join(ctx.cwd, CONFIG_DIR_NAME, "runbooks", "candidates"))
             : [];
           const theme = ctx.ui.theme;
-          const lines: string[] = [theme.fg("accent", theme.bold("Approved runbooks"))];
+          const releaseCount = Object.keys(registry.releases).length + Object.keys(teamData?.releases ?? {}).length;
+          const lines: string[] = [theme.fg("accent", theme.bold(`Approved runbooks (${releaseCount})`))];
           const addReleases = async (scope: string, releases: typeof registry.releases) => {
-            for (const [name, pointer] of Object.entries(releases)) {
+            for (const [name, pointer] of Object.entries(releases).sort(([left], [right]) => left.localeCompare(right))) {
               const contract = await artifacts.contract(pointer.digest);
-              lines.push(
-                `  ${theme.fg("success", theme.bold(name))} ${theme.fg("muted", `(${scope}, ${pointer.digest.slice(0, 12)}…)`)}`,
-                `    ${contract.description}`,
-                `    ${theme.fg("accent", `/runbook run ${name}`)} ${theme.fg("muted", "[optional request]")}`,
-              );
+              if (details) {
+                lines.push(
+                  `  ${theme.fg("success", theme.bold(name))} ${theme.fg("muted", `(${scope}, ${pointer.digest.slice(0, 12)}…)`)}`,
+                  `    ${contract.description}`,
+                  `    ${theme.fg("accent", `/runbook run ${name}`)} ${theme.fg("muted", "[optional request]")}`,
+                );
+              } else {
+                const description = contract.description.replace(/\s+/g, " ").trim();
+                const summary = description.length > 100 ? `${description.slice(0, 99).trimEnd()}…` : description;
+                lines.push(`  ${theme.fg("success", theme.bold(name))} ${theme.fg("muted", `· ${scope}`)} — ${summary}`);
+              }
             }
           };
           await addReleases("personal", registry.releases);
           if (teamData) await addReleases("team", teamData.releases);
-          if (Object.keys(registry.releases).length === 0 && (!teamData || Object.keys(teamData.releases).length === 0)) {
-            lines.push(
-              `  ${theme.fg("muted", "No approved runbooks yet.")}`,
-              `  Start a workflow with ${theme.fg("accent", "/runbook")} and follow the save instructions when it finishes.`,
-            );
+          if (releaseCount === 0) {
+            lines.push(`  ${theme.fg("muted", "No approved runbooks yet.")}`);
+            if (details) lines.push(`  Start a workflow with ${theme.fg("accent", "/runbook")} and follow the save instructions when it finishes.`);
           }
 
-          lines.push("", theme.fg("accent", theme.bold("Project candidate workspaces")));
-          if (projectCandidates.length === 0) {
-            lines.push(`  ${theme.fg("muted", "No local candidate workspaces in this project.")}`);
-          } else {
-            for (const candidate of projectCandidates) {
-              const displayPath = relative(ctx.cwd, candidate.sourcePath) || candidate.sourcePath;
-              if (candidate.contract) {
-                lines.push(
-                  `  ${theme.fg("warning", theme.bold(candidate.contract.name))} ${theme.fg("muted", `v${candidate.contract.version} · editable, not submitted`)}`,
-                  `    ${candidate.contract.description}`,
-                  `    ${theme.fg("muted", `Directory: ${candidate.directoryName} · ${displayPath}`)}`,
-                  `    ${theme.fg("accent", `/runbook propose ${candidate.directoryName}`)}`,
-                );
-              } else {
-                lines.push(
-                  `  ${theme.fg("warning", theme.bold(candidate.directoryName))} ${theme.fg("error", "(invalid candidate)")}`,
-                  `    ${theme.fg("muted", displayPath)}`,
-                  `    ${theme.fg("error", candidate.error ?? "Unable to read candidate")}`,
-                );
+          if (details || projectCandidates.length > 0) {
+            lines.push("", theme.fg("accent", theme.bold(`Project candidates (${projectCandidates.length})`)));
+            if (projectCandidates.length === 0) {
+              lines.push(`  ${theme.fg("muted", "No local candidates in this project.")}`);
+            } else {
+              for (const candidate of projectCandidates) {
+                const displayPath = relative(ctx.cwd, candidate.sourcePath) || candidate.sourcePath;
+                if (candidate.contract) {
+                  lines.push(
+                    `  ${theme.fg("warning", theme.bold(candidate.contract.name))} ${theme.fg("muted", `· v${candidate.contract.version} · editable`)}`,
+                  );
+                  if (details) {
+                    lines.push(
+                      `    ${candidate.contract.description}`,
+                      `    ${theme.fg("muted", `Directory: ${candidate.directoryName} · ${displayPath}`)}`,
+                      `    ${theme.fg("accent", `/runbook propose ${candidate.directoryName}`)}`,
+                    );
+                  }
+                } else {
+                  lines.push(`  ${theme.fg("warning", theme.bold(candidate.directoryName))} ${theme.fg("error", "· invalid")}`);
+                  if (details) lines.push(`    ${theme.fg("muted", displayPath)}`, `    ${theme.fg("error", candidate.error ?? "Unable to read candidate")}`);
+                }
               }
             }
           }
 
-          lines.push("", theme.fg("accent", theme.bold("Submitted proposals")));
-          if (proposalData.length === 0) {
-            lines.push(`  ${theme.fg("muted", "No proposals waiting for review.")}`);
-          } else {
-            for (const proposal of proposalData) {
-              const statusColor = proposal.status === "proposed" ? "warning" : proposal.status === "promoted" ? "success" : "muted";
-              lines.push(
-                `  ${theme.fg(statusColor, theme.bold(proposal.name))} · ${proposal.status}`,
-                `    ${proposal.rationale}`,
-                `    Proposal ID: ${proposal.proposalId}`,
-              );
-              if (proposal.status === "proposed") {
-                lines.push(
-                  `    ${theme.fg("success", `/runbook promote ${proposal.proposalId}`)}`,
-                  `    ${theme.fg("warning", `/runbook reject ${proposal.proposalId} <reason>`)}`,
-                );
+          if (details || proposalData.length > 0) {
+            lines.push("", theme.fg("accent", theme.bold(`Submitted proposals (${proposalData.length})`)));
+            if (proposalData.length === 0) {
+              lines.push(`  ${theme.fg("muted", "No proposals waiting for review.")}`);
+            } else {
+              for (const proposal of proposalData.sort((left, right) => left.name.localeCompare(right.name))) {
+                const statusColor = proposal.status === "proposed" ? "warning" : proposal.status === "promoted" ? "success" : "muted";
+                lines.push(`  ${theme.fg(statusColor, theme.bold(proposal.name))} · ${proposal.status}`);
+                if (details) {
+                  lines.push(`    ${proposal.rationale}`, `    Proposal ID: ${proposal.proposalId}`);
+                  if (proposal.status === "proposed") {
+                    lines.push(
+                      `    ${theme.fg("success", `/runbook promote ${proposal.proposalId}`)}`,
+                      `    ${theme.fg("warning", `/runbook reject ${proposal.proposalId} <reason>`)}`,
+                    );
+                  }
+                }
               }
             }
           }
+          if (!details) lines.push("", `${theme.fg("muted", "More details and actions:")} ${theme.fg("accent", "/runbook list --details")}`);
           ctx.ui.notify(lines.join("\n"), "info");
           return;
         }

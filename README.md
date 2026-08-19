@@ -85,7 +85,7 @@ Pi can then propose a reusable workflow or a revision based on the run. You deci
 | `/runbook to-skill <name> [destination]` | Export an approved runbook as a standalone Pi Agent Skill. |
 | `/runbook run <name> [request]` | Run an approved runbook, candidate, or new governed workflow. |
 | `/runbook status` | Show the active run and pending gate. |
-| `/runbook list` | List releases, candidates, and proposals. |
+| `/runbook list [--details]` | List runbook names and statuses. Add `--details` for descriptions, paths, IDs, and actions. |
 | `/runbook approve` | Approve the pending workflow gate. |
 | `/runbook close` | Close a reviewed run and begin learning. |
 | `/runbook abort [reason]` | Abandon the active run. |
