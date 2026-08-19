@@ -143,6 +143,8 @@ export default function runbooksExtension(pi: ExtensionAPI) {
   let batchBarrierToolCallId: string | undefined;
   let suppressAutomaticOnce = false;
   let learningActive = false;
+  let completionCwd: string | undefined;
+  let completionProjectTrusted = false;
   const governedToolNames = new Set(["runbook_checkpoint", "runbook_finish", "runbook_complete_learning"]);
   const assignmentEntryType = "pi-runbooks:assignment";
 
@@ -545,6 +547,11 @@ export default function runbooksExtension(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", async (_event, ctx) => {
+    // Autocomplete metadata stays extension-local. It is read directly from the
+    // registries and never added to the session or model context.
+    completionCwd = ctx.cwd;
+    completionProjectTrusted = ctx.isProjectTrusted();
+
     // The branch-local assignment entry is the durable binding. The mutable run
     // record supplies current status, gates, and the pinned artifact after a
     // process restart; unrelated branches and forked sessions do not inherit it.
@@ -1011,12 +1018,71 @@ export default function runbooksExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("runbook", {
     description: "Governed runbooks: create, run, improve, approve, and reuse reliable workflows",
-    getArgumentCompletions: (prefix) => {
-      if (/\s/.test(prefix)) return null;
-      const items = COMMAND_HELP
-        .filter(([name]) => name.startsWith(prefix))
-        .map(([name, usage, description]) => ({ value: name, label: usage, description }));
-      return items.length ? items : null;
+    getArgumentCompletions: async (prefix) => {
+      if (!/\s/.test(prefix)) {
+        const items = COMMAND_HELP
+          .filter(([name]) => name.startsWith(prefix))
+          .map(([name, usage, description]) => ({ value: name, label: usage, description }));
+        return items.length ? items : null;
+      }
+
+      const match = /^(run|edit|instruct|to-skill|rollback)\s+([^\s]*)$/.exec(prefix);
+      if (!match) return null;
+      const command = match[1]!;
+      const namePrefix = match[2]!;
+
+      try {
+        const personalNames = Object.keys((await personal.read()).releases);
+        const teamNames = completionProjectTrusted && completionCwd
+          ? Object.keys((await new ReleaseRegistry(
+              join(completionCwd, CONFIG_DIR_NAME, "runbooks", "registry.json"),
+              false,
+            ).read()).releases)
+          : [];
+
+        const sources = new Map<string, Set<string>>();
+        const add = (name: string, source: string) => {
+          const existing = sources.get(name) ?? new Set<string>();
+          existing.add(source);
+          sources.set(name, existing);
+        };
+        for (const name of personalNames) add(name, "personal approved");
+        if (command !== "rollback") {
+          for (const name of teamNames) add(name, "team approved");
+        }
+
+        if (command === "run" && completionProjectTrusted && completionCwd) {
+          const candidates = await listProjectCandidates(
+            join(completionCwd, CONFIG_DIR_NAME, "runbooks", "candidates"),
+          );
+          const valid = candidates.filter((candidate) => candidate.contract);
+          const counts = new Map<string, number>();
+          for (const candidate of valid) {
+            const name = candidate.contract!.name;
+            counts.set(name, (counts.get(name) ?? 0) + 1);
+          }
+          for (const candidate of valid) {
+            const name = candidate.contract!.name;
+            if (counts.get(name) === 1) add(name, "local candidate");
+            else add(candidate.directoryName, `local candidate for ${name}`);
+          }
+        }
+
+        const items = [...sources.entries()]
+          .filter(([name]) => name.startsWith(namePrefix))
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([name, nameSources]) => ({
+            // Pi replaces the complete argument prefix, not only its final word.
+            value: `${command} ${name}`,
+            label: name,
+            description: [...nameSources].join(" · "),
+          }));
+        return items.length ? items : null;
+      } catch {
+        // Completion is optional UI assistance; registry errors remain the
+        // command handler's responsibility and should not disrupt typing.
+        return null;
+      }
     },
     handler: async (args, ctx) => {
       try {
@@ -1467,75 +1533,91 @@ export default function runbooksExtension(pi: ExtensionAPI) {
             ? await listProjectCandidates(join(ctx.cwd, CONFIG_DIR_NAME, "runbooks", "candidates"))
             : [];
           const theme = ctx.ui.theme;
-          const releaseCount = Object.keys(registry.releases).length + Object.keys(teamData?.releases ?? {}).length;
-          const lines: string[] = [theme.fg("accent", theme.bold(`Approved runbooks (${releaseCount})`))];
-          const addReleases = async (scope: string, releases: typeof registry.releases) => {
-            for (const [name, pointer] of Object.entries(releases).sort(([left], [right]) => left.localeCompare(right))) {
-              const contract = await artifacts.contract(pointer.digest);
-              if (details) {
-                lines.push(
-                  `  ${theme.fg("success", theme.bold(name))} ${theme.fg("muted", `(${scope}, ${pointer.digest.slice(0, 12)}…)`)}`,
-                  `    ${contract.description}`,
-                  `    ${theme.fg("accent", `/runbook run ${name}`)} ${theme.fg("muted", "[optional request]")}`,
-                );
-              } else {
-                const description = contract.description.replace(/\s+/g, " ").trim();
-                const summary = description.length > 100 ? `${description.slice(0, 99).trimEnd()}…` : description;
-                lines.push(`  ${theme.fg("success", theme.bold(name))} ${theme.fg("muted", `· ${scope}`)} — ${summary}`);
-              }
-            }
+          type ReleaseEntry = { digest: string; contract: RunbookContract };
+          type WorkflowEntry = {
+            name: string;
+            personal?: ReleaseEntry;
+            team?: ReleaseEntry;
+            candidates: typeof projectCandidates;
+            proposals: typeof proposalData;
           };
-          await addReleases("personal", registry.releases);
-          if (teamData) await addReleases("team", teamData.releases);
-          if (releaseCount === 0) {
-            lines.push(`  ${theme.fg("muted", "No approved runbooks yet.")}`);
+          const workflows = new Map<string, WorkflowEntry>();
+          const workflow = (name: string): WorkflowEntry => {
+            const existing = workflows.get(name);
+            if (existing) return existing;
+            const created: WorkflowEntry = { name, candidates: [], proposals: [] };
+            workflows.set(name, created);
+            return created;
+          };
+
+          for (const [name, pointer] of Object.entries(registry.releases)) {
+            workflow(name).personal = { digest: pointer.digest, contract: await artifacts.contract(pointer.digest) };
+          }
+          for (const [name, pointer] of Object.entries(teamData?.releases ?? {})) {
+            workflow(name).team = { digest: pointer.digest, contract: await artifacts.contract(pointer.digest) };
+          }
+          for (const candidate of projectCandidates) workflow(candidate.contract?.name ?? candidate.directoryName).candidates.push(candidate);
+          for (const proposal of proposalData) workflow(proposal.name).proposals.push(proposal);
+
+          const entries = [...workflows.values()].sort((left, right) => left.name.localeCompare(right.name));
+          const lines: string[] = [theme.fg("accent", theme.bold(`Runbooks (${entries.length})`))];
+          if (entries.length === 0) {
+            lines.push(`  ${theme.fg("muted", "No runbooks yet.")}`);
             if (details) lines.push(`  Start a workflow with ${theme.fg("accent", "/runbook")} and follow the save instructions when it finishes.`);
           }
 
-          if (details || projectCandidates.length > 0) {
-            lines.push("", theme.fg("accent", theme.bold(`Project candidates (${projectCandidates.length})`)));
-            if (projectCandidates.length === 0) {
-              lines.push(`  ${theme.fg("muted", "No local candidates in this project.")}`);
-            } else {
-              for (const candidate of projectCandidates) {
+          for (const entry of entries) {
+            const release = entry.personal ?? entry.team;
+            const validCandidates = entry.candidates.filter((candidate) => candidate.contract);
+            const invalidCandidates = entry.candidates.filter((candidate) => !candidate.contract);
+            const pending = entry.proposals.filter((proposal) => proposal.status === "proposed");
+            const statuses: string[] = [];
+            if (release) statuses.push(`approved ${entry.personal ? "personal" : "team"}`);
+            if (validCandidates.length === 1) statuses.push(`v${validCandidates[0]!.contract!.version} · editable`);
+            else if (validCandidates.length > 1) statuses.push(`${validCandidates.length} editable candidates`);
+            if (invalidCandidates.length > 0) statuses.push(`${invalidCandidates.length === 1 ? "invalid candidate" : `${invalidCandidates.length} invalid candidates`}`);
+            if (pending.length === 1) statuses.push("proposed");
+            else if (pending.length > 1) statuses.push(`${pending.length} proposals pending`);
+            if (!release && validCandidates.length === 0 && invalidCandidates.length === 0 && pending.length === 0) {
+              const latest = [...entry.proposals].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+              if (latest) statuses.push(latest.status);
+            }
+
+            const color = release ? "success" : pending.length > 0 || validCandidates.length > 0 ? "warning" : "muted";
+            const description = (release?.contract.description ?? validCandidates[0]?.contract?.description)?.replace(/\s+/g, " ").trim();
+            if (details) {
+              lines.push(`  ${theme.fg(color, theme.bold(entry.name))} ${theme.fg("muted", `· ${statuses.join(" · ")}`)}`);
+              if (description) lines.push(`    ${description}`);
+              if (release) {
+                const scope = entry.personal ? "personal" : "team";
+                lines.push(
+                  `    ${theme.fg("muted", `Approved: ${scope} · ${release.digest.slice(0, 12)}…`)}`,
+                  `    ${theme.fg("accent", `/runbook run ${entry.name}`)} ${theme.fg("muted", "[optional request]")}`,
+                );
+                if (entry.personal && entry.team) lines.push(`    ${theme.fg("muted", "A personal release overrides the team release.")}`);
+              }
+              for (const candidate of entry.candidates) {
                 const displayPath = relative(ctx.cwd, candidate.sourcePath) || candidate.sourcePath;
                 if (candidate.contract) {
                   lines.push(
-                    `  ${theme.fg("warning", theme.bold(candidate.contract.name))} ${theme.fg("muted", `· v${candidate.contract.version} · editable`)}`,
+                    `    ${theme.fg("muted", `Candidate v${candidate.contract.version} · Directory: ${candidate.directoryName} · ${displayPath}`)}`,
+                    `    ${theme.fg("accent", `/runbook propose ${candidate.directoryName}`)}`,
                   );
-                  if (details) {
-                    lines.push(
-                      `    ${candidate.contract.description}`,
-                      `    ${theme.fg("muted", `Directory: ${candidate.directoryName} · ${displayPath}`)}`,
-                      `    ${theme.fg("accent", `/runbook propose ${candidate.directoryName}`)}`,
-                    );
-                  }
                 } else {
-                  lines.push(`  ${theme.fg("warning", theme.bold(candidate.directoryName))} ${theme.fg("error", "· invalid")}`);
-                  if (details) lines.push(`    ${theme.fg("muted", displayPath)}`, `    ${theme.fg("error", candidate.error ?? "Unable to read candidate")}`);
+                  lines.push(`    ${theme.fg("error", `Invalid candidate: ${candidate.directoryName} · ${displayPath} · ${candidate.error ?? "Unable to read candidate"}`)}`);
                 }
               }
-            }
-          }
-
-          if (details || proposalData.length > 0) {
-            lines.push("", theme.fg("accent", theme.bold(`Submitted proposals (${proposalData.length})`)));
-            if (proposalData.length === 0) {
-              lines.push(`  ${theme.fg("muted", "No proposals waiting for review.")}`);
+              for (const proposal of pending.sort((left, right) => left.createdAt.localeCompare(right.createdAt))) {
+                lines.push(
+                  `    ${proposal.rationale}`,
+                  `    Proposal ID: ${proposal.proposalId}`,
+                  `    ${theme.fg("success", `/runbook promote ${proposal.proposalId}`)}`,
+                  `    ${theme.fg("warning", `/runbook reject ${proposal.proposalId} <reason>`)}`,
+                );
+              }
             } else {
-              for (const proposal of proposalData.sort((left, right) => left.name.localeCompare(right.name))) {
-                const statusColor = proposal.status === "proposed" ? "warning" : proposal.status === "promoted" ? "success" : "muted";
-                lines.push(`  ${theme.fg(statusColor, theme.bold(proposal.name))} · ${proposal.status}`);
-                if (details) {
-                  lines.push(`    ${proposal.rationale}`, `    Proposal ID: ${proposal.proposalId}`);
-                  if (proposal.status === "proposed") {
-                    lines.push(
-                      `    ${theme.fg("success", `/runbook promote ${proposal.proposalId}`)}`,
-                      `    ${theme.fg("warning", `/runbook reject ${proposal.proposalId} <reason>`)}`,
-                    );
-                  }
-                }
-              }
+              const summary = description ? ` — ${description.length > 100 ? `${description.slice(0, 99).trimEnd()}…` : description}` : "";
+              lines.push(`  ${theme.fg(color, theme.bold(entry.name))} ${theme.fg("muted", `· ${statuses.join(" · ")}`)}${summary}`);
             }
           }
           if (!details) lines.push("", `${theme.fg("muted", "More details and actions:")} ${theme.fg("accent", "/runbook list --details")}`);

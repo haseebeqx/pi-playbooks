@@ -61,6 +61,42 @@ async function fixture() {
   return { root, source, home: join(root, "home") };
 }
 
+test("runbook command completes approved names without invoking the model", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-completion-"));
+  const home = join(root, "home");
+  await new ReleaseRegistry(join(home, "registry.json")).promote("release-check", "a".repeat(64));
+
+  let getArgumentCompletions: ((prefix: string) => Promise<Array<{ value: string; label: string }> | null>) | undefined;
+  const api = {
+    on: () => {},
+    registerTool: () => {},
+    registerCommand: (_name: string, options: { getArgumentCompletions: typeof getArgumentCompletions }) => {
+      getArgumentCompletions = options.getArgumentCompletions;
+    },
+  } as unknown as ExtensionAPI;
+
+  const previousHome = process.env.PI_RUNBOOKS_HOME;
+  process.env.PI_RUNBOOKS_HOME = home;
+  try {
+    runbooksExtension(api);
+  } finally {
+    if (previousHome === undefined) delete process.env.PI_RUNBOOKS_HOME;
+    else process.env.PI_RUNBOOKS_HOME = previousHome;
+  }
+
+  assert.deepEqual(await getArgumentCompletions?.("run rel"), [{
+    value: "run release-check",
+    label: "release-check",
+    description: "personal approved",
+  }]);
+  assert.deepEqual(await getArgumentCompletions?.("edit rel"), [{
+    value: "edit release-check",
+    label: "release-check",
+    description: "personal approved",
+  }]);
+  assert.equal(await getArgumentCompletions?.("run release-check request"), null);
+});
+
 test("extension restores an active run and its prompt controls when the same session reopens", async () => {
   const { root, source, home } = await fixture();
   const artifacts = new ArtifactStore(home);
@@ -105,6 +141,7 @@ test("extension restores an active run and its prompt controls when the same ses
   }];
   const ctx = {
     cwd: root,
+    isProjectTrusted: () => false,
     sessionManager: {
       getBranch: () => branch,
       getSessionId: () => "same-session",
@@ -342,8 +379,11 @@ test("runbook list is concise by default and exposes details on request", async 
   const root = await mkdtemp(join(tmpdir(), "pi-runbooks-list-"));
   const home = join(root, "home");
   const candidate = join(root, ".pi", "runbooks", "candidates", "research-draft");
+  const proposedCandidate = join(root, ".pi", "runbooks", "candidates", "review-process-draft");
   await mkdir(candidate, { recursive: true });
+  await mkdir(proposedCandidate, { recursive: true });
   await writeFile(join(candidate, "runbook.json"), JSON.stringify(contract({ name: "research-draft", version: "0.2.0" })));
+  await writeFile(join(proposedCandidate, "runbook.json"), JSON.stringify(contract({ name: "review-process", version: "0.3.0" })));
   const proposal = await new ProposalStore(home).create({
     name: "review-process",
     candidateDigest: "a".repeat(64),
@@ -378,13 +418,16 @@ test("runbook list is concise by default and exposes details on request", async 
   await handler("list", ctx);
   const concise = notices.pop() ?? "";
   assert.match(concise, /research-draft · v0\.2\.0 · editable/);
-  assert.match(concise, /review-process · proposed/);
+  assert.match(concise, /review-process · v0\.3\.0 · editable · proposed/);
+  assert.equal(concise.split("\n").filter((line) => /^  review-process ·/.test(line)).length, 1);
   assert.match(concise, /\/runbook list --details/);
   assert.doesNotMatch(concise, /Directory:|Proposal ID:|long internal explanation|\/runbook promote/);
 
   await handler("list --details", ctx);
   const detailed = notices.pop() ?? "";
   assert.match(detailed, /Directory: research-draft/);
+  assert.match(detailed, /Directory: review-process-draft/);
+  assert.equal(detailed.split("\n").filter((line) => /^  review-process ·/.test(line)).length, 1);
   assert.match(detailed, new RegExp(`Proposal ID: ${proposal.proposalId}`));
   assert.match(detailed, /long internal explanation/);
   assert.match(detailed, /\/runbook promote/);
