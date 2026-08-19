@@ -81,6 +81,8 @@ Pi can then propose a reusable workflow or a revision based on the run. You deci
 |---|---|
 | `/runbook` | Start interactively or show the active run. |
 | `/runbook record [name]` | Extract a reusable workflow from the current session. |
+| `/runbook from-skill <name\|directory> [destination]` | Convert a loaded Pi Agent Skill into an editable runbook candidate. |
+| `/runbook to-skill <name> [destination]` | Export an approved runbook as a standalone Pi Agent Skill. |
 | `/runbook run <name> [request]` | Run an approved runbook, candidate, or new governed workflow. |
 | `/runbook status` | Show the active run and pending gate. |
 | `/runbook list` | List releases, candidates, and proposals. |
@@ -118,6 +120,28 @@ To activate the first version of a manually authored runbook:
 ```
 
 Updates to an approved runbook go through the candidate review flow. An example is available in [`examples/research-runbook`](examples/research-runbook).
+
+### Convert to and from Pi skills
+
+Import a loaded skill by name, or a skill directory containing `SKILL.md`, as an editable candidate:
+
+```text
+/runbook from-skill pdf-tools
+/runbook from-skill path/to/my-skill
+```
+
+Names are resolved from Pi's currently loaded skills, including global, project, package, settings, and CLI skill sources.
+
+The generated `runbook.json` uses explicit invocation and broad effect declarations because a skill does not carry a runbook governance contract. Review those fields, then submit the candidate using the command Pi displays.
+
+Export an approved runbook into the project's `.pi/skills/` directory (or pass a destination):
+
+```text
+/runbook to-skill release-check
+/runbook to-skill release-check path/to/release-check-skill
+```
+
+The export writes a standards-compatible `SKILL.md` plus bundled scripts and references. Runbook-only governance metadata is omitted, so using the exported skill does not provide runbook pinning, gates, policy enforcement, or evidence tracking.
 
 ## Safety
 

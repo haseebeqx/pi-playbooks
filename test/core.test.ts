@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,6 +16,7 @@ import { assertProposalIsProposed, ProposalStore } from "../src/proposals.js";
 import { ReleaseRegistry } from "../src/registry.js";
 import { resolveAutomatic } from "../src/resolver.js";
 import { evaluatePredicates, hashRunArtifact, RunStore } from "../src/runs.js";
+import { runbookToSkill, skillToRunbook } from "../src/skill-conversion.js";
 import { commandEvidenceFromSession, redactCommand } from "../src/trajectory.js";
 
 function contract(overrides: Record<string, unknown> = {}) {
@@ -59,6 +60,36 @@ async function fixture() {
   await chmod(join(source, "scripts", "validate.sh"), 0o755);
   return { root, source, home: join(root, "home") };
 }
+
+test("from-skill resolves currently loaded Pi skills by name", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-loaded-skill-"));
+  const skillFile = join(root, "release-check.md");
+  await writeFile(skillFile, "---\nname: release-check\ndescription: Check a release.\n---\n\n# Check\n");
+  let handler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
+  const notices: string[] = [];
+  const api = {
+    on: () => {},
+    registerTool: () => {},
+    registerCommand: (_name: string, options: { handler: typeof handler }) => { handler = options.handler; },
+    getCommands: () => [{
+      name: "skill:release-check",
+      source: "skill",
+      sourceInfo: { path: skillFile, source: "settings", scope: "user", origin: "top-level" },
+    }],
+  } as unknown as ExtensionAPI;
+  runbooksExtension(api);
+  assert.ok(handler);
+  await handler("from-skill release-check candidate", {
+    cwd: root,
+    isProjectTrusted: () => false,
+    ui: {
+      notify: (message: string) => { notices.push(message); },
+      theme: { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+    },
+  });
+  assert.equal(JSON.parse(await readFile(join(root, "candidate", "runbook.json"), "utf8")).name, "release-check");
+  assert.match(notices[0] ?? "", /Converted Pi skill/);
+});
 
 test("persistent instructions append to the procedure and advance source versions", () => {
   assert.equal(nextSourceVersion("0.1.9"), "0.1.10");
@@ -104,6 +135,46 @@ test("runbooks can be skill-less or declare multiple skill dependencies", async 
   assert.equal(manifest.procedurePath, "RUNBOOK.md");
   assert.equal(await store.procedure(manifest.digest), "# Skill-less main workflow\n");
   assert.deepEqual(manifest.contract.skillDependencies, ["skills/research", "skills/reporting"]);
+});
+
+test("Pi skills convert to editable runbooks and sealed runbooks export as standalone skills", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-skill-conversion-"));
+  const skill = join(root, "source-skill");
+  const candidate = join(root, "candidate");
+  const exported = join(root, "exported-skill");
+  await mkdir(join(skill, "scripts"), { recursive: true });
+  await writeFile(join(skill, "SKILL.md"), "---\nname: release-check\ndescription: Check whether a project is ready to release.\nallowed-tools: read bash\n---\n\n# Release check\n\nRun the bundled validator.\n");
+  await writeFile(join(skill, "scripts", "validate.sh"), "#!/bin/sh\nexit 0\n");
+  await chmod(join(skill, "scripts", "validate.sh"), 0o755);
+
+  const converted = await skillToRunbook(skill, candidate);
+  assert.equal(converted.name, "release-check");
+  assert.equal(converted.procedure, "SKILL.md");
+  assert.deepEqual(converted.requiredCapabilities, ["runbook_checkpoint", "runbook_finish"]);
+  assert.equal((await readFile(join(candidate, "SKILL.md"), "utf8")).includes("# Release check"), true);
+
+  const artifacts = new ArtifactStore(join(root, "home"));
+  const sealed = await artifacts.seal(candidate);
+  await runbookToSkill(artifacts, sealed.digest, exported);
+  const exportedSkill = await readFile(join(exported, "SKILL.md"), "utf8");
+  assert.match(exportedSkill, /^---\nname: release-check\ndescription: "Check whether a project is ready to release\."\n---/);
+  assert.match(exportedSkill, /# Release check/);
+  await assert.rejects(readFile(join(exported, "runbook.json"), "utf8"), /ENOENT/);
+  assert.equal((await lstat(join(exported, "scripts", "validate.sh"))).mode & 0o111, 0o111);
+});
+
+test("skill conversion rejects invalid metadata and symlinks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-runbooks-invalid-skill-"));
+  const invalid = join(root, "invalid");
+  await mkdir(invalid);
+  await writeFile(join(invalid, "SKILL.md"), "---\nname: Invalid Name\ndescription: Bad.\n---\n");
+  await assert.rejects(skillToRunbook(invalid, join(root, "candidate")), /frontmatter name/);
+
+  const linked = join(root, "linked");
+  await mkdir(linked);
+  await writeFile(join(linked, "SKILL.md"), "---\nname: linked\ndescription: Linked skill.\n---\n");
+  await symlink(join(invalid, "SKILL.md"), join(linked, "reference.md"));
+  await assert.rejects(skillToRunbook(linked, join(root, "linked-candidate")), /does not allow symlinks/);
 });
 
 test("sealing is content-addressed, immutable, and detects mutation", async () => {

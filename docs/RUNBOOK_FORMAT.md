@@ -42,6 +42,10 @@ Optional Agent Skills are dependencies, not the identity of the runbook:
 
 Every dependency path must stay inside the bundle and point to a directory containing `SKILL.md`. Dependencies are sealed with that runbook version and exposed to the model for on-demand reading. A later candidate may add or remove dependencies without changing the active release or the original installed skills.
 
+A standalone Pi skill can be converted into a candidate by loaded name or path with `/runbook from-skill <skill-name|directory> [destination]`. Names resolve through Pi's current skill command registry. Its `SKILL.md` remains the procedure and its support files are copied. Because Agent Skills do not define runbook effects, capabilities, predicates, or gates, the generated contract is an explicit-invocation starting point with broad allowed effects and must be reviewed before sealing.
+
+An approved runbook can be exported with `/runbook to-skill <runbook-name> [destination]`. The procedure becomes the exported root `SKILL.md`; support files are copied, while `runbook.json` and its governance semantics are intentionally omitted.
+
 ## Applicability
 
 ```json

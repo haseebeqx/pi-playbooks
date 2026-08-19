@@ -1,5 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { basename, join, relative, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
   CONFIG_DIR_NAME,
@@ -17,6 +17,7 @@ import { ReleaseRegistry, personalRegistryPath } from "../src/registry.js";
 import { assertProposalIsProposed, ProposalStore } from "../src/proposals.js";
 import { resolveAutomatic, resolveNamed, type ResolvedRelease } from "../src/resolver.js";
 import { evaluatePredicates, hashRunArtifact, RunStore } from "../src/runs.js";
+import { runbookToSkill, skillToRunbook } from "../src/skill-conversion.js";
 import { commandEvidenceFromSession } from "../src/trajectory.js";
 import {
   attestTools,
@@ -52,6 +53,8 @@ const CompleteLearningParameters = Type.Object({
 const COMMAND_HELP: ReadonlyArray<readonly [name: string, usage: string, description: string]> = [
   ["run", "run <runbook-name> [request]", "Start an approved runbook or local candidate as written, or provide a request to refine it or create an ad hoc workflow."],
   ["record", "record [runbook-name]", "Convert the current session so far into a reusable runbook."],
+  ["from-skill", "from-skill <skill-name|directory> [destination]", "Convert a loaded Pi Agent Skill into an editable runbook candidate."],
+  ["to-skill", "to-skill <runbook-name> [destination]", "Export an approved runbook as a standalone Pi Agent Skill."],
   ["status", "status", "Show the active run, current stage, and status."],
   ["list", "list", "List approved runbooks, project candidate workspaces, and submitted proposals."],
   ["edit", "edit <runbook-name> [destination]", "Create an editable candidate from the currently approved release."],
@@ -1141,6 +1144,60 @@ export default function runbooksExtension(pi: ExtensionAPI) {
             reason: "user confirmed conversion of the current session into a reusable runbook",
           });
           await startDraft(run.runId, undefined, ctx, "automatic", "record-session");
+          return;
+        }
+        if (command === "from-skill") {
+          const sourceArgument = words.shift();
+          const destinationArgument = words.shift();
+          if (!sourceArgument || words.length > 0) throw new Error("Usage: /runbook from-skill <skill-name|directory> [destination]");
+          const pathCandidate = resolve(ctx.cwd, sourceArgument);
+          let source: string;
+          let defaultName: string;
+          try {
+            await lstat(pathCandidate);
+            source = pathCandidate;
+            defaultName = basename(source, ".md");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            const skillName = sourceArgument.replace(/^\/?skill:/, "");
+            const matches = pi.getCommands().filter((item) =>
+              item.source === "skill" && item.name === `skill:${skillName}`,
+            );
+            if (matches.length === 0) {
+              throw new Error(`No loaded Pi skill named ${skillName}. Use its loaded skill name or provide a directory path.`);
+            }
+            if (matches.length > 1) throw new Error(`Multiple loaded Pi skills are named ${skillName}; provide a directory path.`);
+            source = matches[0]!.sourceInfo.path;
+            defaultName = skillName;
+          }
+          const destination = resolve(ctx.cwd, destinationArgument ?? join(CONFIG_DIR_NAME, "runbooks", "candidates", `${defaultName}-from-skill`));
+          const contract = await skillToRunbook(source, destination);
+          const theme = ctx.ui.theme;
+          ctx.ui.notify([
+            theme.fg("success", theme.bold(`Converted Pi skill to runbook candidate: ${contract.name}`)),
+            destination,
+            theme.fg("warning", "Review runbook.json, especially requiredCapabilities and allowedEffectClasses, before sealing."),
+            "",
+            theme.fg("text", "Submit it for approval with:"),
+            `  ${theme.fg("success", `/runbook propose ${JSON.stringify(relative(ctx.cwd, destination) || destination)} new none imported-from-pi-skill`)}`,
+          ].join("\n"), "info");
+          return;
+        }
+        if (command === "to-skill") {
+          const name = words.shift();
+          const destinationArgument = words.shift();
+          if (!name || words.length > 0) throw new Error("Usage: /runbook to-skill <runbook-name> [destination]");
+          const release = await resolveNamed(name, artifacts, personal, team);
+          if (!release) throw new Error(`No approved runbook named ${name}`);
+          const destination = resolve(ctx.cwd, destinationArgument ?? join(CONFIG_DIR_NAME, "skills", name));
+          await runbookToSkill(artifacts, release.digest, destination);
+          const theme = ctx.ui.theme;
+          ctx.ui.notify([
+            theme.fg("success", theme.bold(`Exported ${name} as a Pi skill`)),
+            destination,
+            theme.fg("muted", "The skill contains SKILL.md and bundled support files; runbook governance metadata is not included."),
+            theme.fg("muted", "Restart or reload Pi resources to discover the new skill."),
+          ].join("\n"), "info");
           return;
         }
         if (command === "seal") {
