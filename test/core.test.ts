@@ -61,6 +61,67 @@ async function fixture() {
   return { root, source, home: join(root, "home") };
 }
 
+test("extension restores an active run and its prompt controls when the same session reopens", async () => {
+  const { root, source, home } = await fixture();
+  const artifacts = new ArtifactStore(home);
+  const sealed = await artifacts.seal(source);
+  const runs = new RunStore(home);
+  const run = await runs.create({
+    runbookName: sealed.contract.name,
+    artifactDigest: sealed.digest,
+    releaseScope: "personal",
+    cwd: root,
+    sessionId: "same-session",
+    originalPrompt: "research this",
+    toolAttestations: [],
+  });
+
+  const handlers = new Map<string, (event: unknown, ctx: any) => Promise<any>>();
+  let activeTools = ["read", "bash"];
+  const api = {
+    on: (name: string, handler: (event: unknown, ctx: any) => Promise<any>) => { handlers.set(name, handler); },
+    registerTool: () => {},
+    registerCommand: () => {},
+    getActiveTools: () => activeTools,
+    setActiveTools: (tools: string[]) => { activeTools = tools; },
+    getAllTools: () => [],
+  } as unknown as ExtensionAPI;
+  const previousHome = process.env.PI_RUNBOOKS_HOME;
+  process.env.PI_RUNBOOKS_HOME = home;
+  try {
+    runbooksExtension(api);
+  } finally {
+    if (previousHome === undefined) delete process.env.PI_RUNBOOKS_HOME;
+    else process.env.PI_RUNBOOKS_HOME = previousHome;
+  }
+
+  const branch = [{
+    type: "custom",
+    id: "assignment",
+    parentId: null,
+    timestamp: new Date().toISOString(),
+    customType: "pi-runbooks:assignment",
+    data: { runId: run.runId },
+  }];
+  const ctx = {
+    cwd: root,
+    sessionManager: {
+      getBranch: () => branch,
+      getSessionId: () => "same-session",
+      getLeafId: () => "assignment",
+    },
+    ui: { setStatus: () => {}, setWidget: () => {} },
+  };
+  await handlers.get("session_start")?.({}, ctx);
+  assert.ok(activeTools.includes("runbook_checkpoint"));
+  assert.ok(activeTools.includes("runbook_finish"));
+
+  const result = await handlers.get("before_agent_start")?.({ systemPrompt: "base", prompt: "continue" }, ctx);
+  assert.match(result?.systemPrompt ?? "", new RegExp(`Pinned artifact: ${sealed.digest}`));
+  assert.doesNotMatch(result?.systemPrompt ?? "", /Run ID:|Assignment ID:/);
+  assert.match(result?.systemPrompt ?? "", /# Procedure/);
+});
+
 test("from-skill resolves currently loaded Pi skills by name", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-runbooks-loaded-skill-"));
   const skillFile = join(root, "release-check.md");
@@ -387,7 +448,7 @@ test("only pending proposals can be promoted or rejected", async () => {
   assert.throws(() => assertProposalIsProposed(proposal, "reject"), /cannot be rejected: promoted/);
 });
 
-test("run assignment remains pinned while registry changes", async () => {
+test("run assignment remains pinned and restores from the current session branch", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-runbooks-runs-"));
   const runs = new RunStore(root);
   const run = await runs.create({
@@ -410,7 +471,19 @@ test("run assignment remains pinned while registry changes", async () => {
     predicateResults: [],
   };
   await runs.save(stored);
-  assert.equal((await runs.activeForSession("session"))[0]?.status, "review");
+
+  assert.equal((await runs.activeForAssignments([run.runId], "session"))?.status, "review");
+  assert.equal(await runs.activeForAssignments([], "session"), undefined);
+  assert.equal(await runs.activeForAssignments([run.runId], "forked-session"), undefined);
+  assert.equal(
+    await runs.activeForAssignments([run.runId, "00000000-0000-0000-0000-000000000000"], "session"),
+    undefined,
+    "a newer assignment marker supersedes older branch assignments even when its run record is unavailable",
+  );
+
+  stored.status = "completed";
+  await runs.save(stored);
+  assert.equal(await runs.activeForAssignments([run.runId], "session"), undefined);
 });
 
 test("success predicates and effect policy fail closed", async () => {

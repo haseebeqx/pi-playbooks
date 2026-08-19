@@ -7,6 +7,7 @@ The package retains the original three-plane design.
 Implemented in `0.0.1`:
 
 - fixed artifact assignment for a long-lived runbook run;
+- durable branch-local assignment entries that automatically restore non-terminal runs when the same Pi session is reopened, detach on navigation before assignment, and reattach when returning to the assigned branch;
 - approved named runbooks started as self-contained workflows with `/runbook run <name>`, with an optional request to refine their scope;
 - trusted project candidates resolved by contract or directory name, sealed into immutable snapshots, and run without promotion or an additional request;
 - ad hoc governed runs created interactively with `/runbook` or `/runbook run <name>`, which prompts for a missing request, or explicitly with `/runbook run <name> <request>`, without a pre-existing procedure or skill;

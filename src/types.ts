@@ -91,7 +91,6 @@ export interface RunbookRun {
   cwd: string;
   sessionId: string;
   sessionFile?: string;
-  branchRootEntryId?: string;
   originalPrompt: string;
   startedAt: string;
   updatedAt: string;

@@ -61,11 +61,10 @@ const COMMAND_HELP: ReadonlyArray<readonly [name: string, usage: string, descrip
   ["instruct", "instruct <runbook-name> <instruction>", "Add a persistent instruction and request approval for future runs."],
   ["approve", "approve", "Approve the workflow gate currently waiting for your decision."],
   ["close", "close", "Close a reviewed run and start automatic evidence-based learning."],
-  ["resume", "resume <run-id>", "Attach an unfinished or review-ready run to this Pi session."],
   ["abort", "abort [reason]", "Abandon the active run and optionally record why."],
   ["seal", "seal <source-directory>", "Create an immutable runbook artifact from a source directory."],
   ["verify", "verify [digest]", "Verify a sealed artifact, or the active run's artifact."],
-  ["draft", "draft <run-id> [destination]", "Advanced: create an editable improvement workspace from a completed run."],
+  ["draft", "draft [destination]", "Advanced: create an editable improvement workspace from the latest run on this session branch."],
   ["propose", "propose <candidate>", "Advanced: submit a manually prepared candidate without activating it."],
   ["promote", "promote <proposal-id|digest>", "Advanced: activate a reviewed proposal or bootstrap a sealed runbook."],
   ["reject", "reject <proposal-id> [reason]", "Advanced: reject a candidate proposal without changing the active version."],
@@ -145,6 +144,19 @@ export default function runbooksExtension(pi: ExtensionAPI) {
   let suppressAutomaticOnce = false;
   let learningActive = false;
   const governedToolNames = new Set(["runbook_checkpoint", "runbook_finish", "runbook_complete_learning"]);
+  const assignmentEntryType = "pi-runbooks:assignment";
+
+  const assignmentRunIds = (ctx: ExtensionContext): string[] => ctx.sessionManager.getBranch()
+    .flatMap((entry) => {
+      if (entry.type !== "custom" || entry.customType !== assignmentEntryType) return [];
+      const runId = (entry.data as { runId?: unknown } | undefined)?.runId;
+      return typeof runId === "string" ? [runId] : [];
+    });
+
+  const assignedRunForBranch = (ctx: ExtensionContext) => runs.activeForAssignments(
+    assignmentRunIds(ctx),
+    ctx.sessionManager.getSessionId(),
+  );
 
   const syncGovernedTools = () => {
     const active = pi.getActiveTools().filter((name) => !governedToolNames.has(name));
@@ -234,10 +246,9 @@ export default function runbooksExtension(pi: ExtensionAPI) {
     prompt: string,
     ctx: ExtensionContext,
   ): Promise<RunbookRun> => {
-    if (activeRun) throw new Error(`Run ${activeRun.runId} is already active`);
+    if (activeRun) throw new Error(`The ${activeRun.runbookName} runbook is already active`);
     await artifacts.verify(release.digest);
     const attestations = attestTools(release.contract.requiredCapabilities, toolMetadata(pi));
-    const leaf = ctx.sessionManager.getLeafId();
     const sessionFile = ctx.sessionManager.getSessionFile();
     const run = await runs.create({
       runbookName: release.name,
@@ -246,18 +257,17 @@ export default function runbooksExtension(pi: ExtensionAPI) {
       cwd: ctx.cwd,
       sessionId: ctx.sessionManager.getSessionId(),
       ...(sessionFile ? { sessionFile } : {}),
-      ...(leaf ? { branchRootEntryId: leaf } : {}),
       originalPrompt: prompt,
       toolAttestations: attestations,
     });
-    await setActive(run, ctx);
-    pi.appendEntry("pi-runbooks:assignment", {
+    pi.appendEntry(assignmentEntryType, {
       runId: run.runId,
       assignmentId: run.assignmentId,
       runbookName: run.runbookName,
       artifactDigest: run.artifactDigest,
     });
-    await appendFact(ctx, { type: "RUN_ASSIGNED", reason: "fixed artifact assignment created before runbook execution" });
+    await setActive(run, ctx);
+    await appendFact(ctx, { type: "RUN_ASSIGNED", reason: "fixed artifact assignment persisted on the Pi session branch before runbook execution" });
     return run;
   };
 
@@ -267,7 +277,6 @@ export default function runbooksExtension(pi: ExtensionAPI) {
     const candidate = release.scope === "project-candidate";
     ctx.ui.notify([
       theme.fg("success", theme.bold(`Started ${run.runbookName}`)),
-      `Run ID: ${theme.fg("accent", run.runId)}`,
       approved
         ? `Using ${theme.fg("success", `${release.scope} approved runbook`)} ${theme.fg("muted", release.digest.slice(0, 12) + "…")}`
         : candidate
@@ -333,7 +342,7 @@ export default function runbooksExtension(pi: ExtensionAPI) {
     const successful = completedRun.status === "completed";
     ctx.ui.notify([
       theme.fg(successful ? "success" : "warning", theme.bold(`Runbook run ${completedRun.status}`)),
-      `${completedRun.runbookName} · ${completedRun.runId}`,
+      completedRun.runbookName,
       review.summary,
       "",
       theme.fg("accent", "Pi will now learn from this run automatically."),
@@ -536,21 +545,23 @@ export default function runbooksExtension(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", async (_event, ctx) => {
-    const found = await runs.activeForSession(ctx.sessionManager.getSessionId());
-    if (found.length > 1) {
-      ctx.ui.notify("Multiple active runbook runs reference this session; use /runbook resume <runId>", "error");
-      await setActive(undefined, ctx);
-      return;
-    }
-    await setActive(found[0], ctx);
+    // The branch-local assignment entry is the durable binding. The mutable run
+    // record supplies current status, gates, and the pinned artifact after a
+    // process restart; unrelated branches and forked sessions do not inherit it.
+    await setActive(await assignedRunForBranch(ctx), ctx);
   });
 
   pi.on("session_tree", async (_event, ctx) => {
-    if (!activeRun?.branchRootEntryId) return;
-    const onAssignedBranch = ctx.sessionManager.getBranch().some((entry) => entry.id === activeRun?.branchRootEntryId);
-    if (!onAssignedBranch) {
-      await appendFact(ctx, { type: "RUN_DETACHED_FROM_BRANCH", reason: "active branch no longer contains assignment root" });
-      await setActive(undefined, ctx);
+    const previous = activeRun;
+    const assigned = await assignedRunForBranch(ctx);
+    if (assigned?.runId === previous?.runId) return;
+    if (previous) {
+      await appendFact(ctx, { type: "RUN_DETACHED_FROM_BRANCH", reason: "active branch no longer contains its durable assignment" });
+    }
+    await setActive(assigned, ctx);
+    if (assigned) {
+      ctx.ui.notify(`Restored ${assigned.runbookName} from this session branch`, "info");
+    } else if (previous) {
       ctx.ui.notify("Runbook run detached because the session tree moved before its assignment", "warning");
     }
   });
@@ -597,7 +608,7 @@ export default function runbooksExtension(pi: ExtensionAPI) {
       ? `\nThis run is IN REVIEW. Proposed outcome: ${activeRun.completionReview.outcome}. The user may ask questions or request changes, and all resulting work remains inside this governed run. Do not restart the procedure unnecessarily. If material changes alter the result, call runbook_finish again with an updated outcome and summary. Only the user closes the run with /runbook close.`
       : "";
     return {
-      systemPrompt: `${event.systemPrompt}\n\n# Active governed runbook\nRun ID: ${activeRun.runId}\nAssignment ID: ${activeRun.assignmentId}\nPinned artifact: ${activeRun.artifactDigest}\nImmutable runbook root: ${root}\nResolve all runbook-relative references, optional skills, and scripts beneath that root. Write declared run artifacts relative to the run cwd: ${activeRun.cwd}. The assignment remains fixed for the entire run. Use runbook_checkpoint at durable stage boundaries and use runbook_finish when work is ready for user review; the user explicitly closes the run after follow-ups.${skillDependencyText}${gateText}${reviewText}\n\n<runbook-procedure>\n${procedure}\n</runbook-procedure>`,
+      systemPrompt: `${event.systemPrompt}\n\n# Active governed runbook\nPinned artifact: ${activeRun.artifactDigest}\nImmutable runbook root: ${root}\nResolve all runbook-relative references, optional skills, and scripts beneath that root. Write declared run artifacts relative to the run cwd: ${activeRun.cwd}. The assignment remains fixed for the entire run. Use runbook_checkpoint at durable stage boundaries and use runbook_finish when work is ready for user review; the user explicitly closes the run after follow-ups.${skillDependencyText}${gateText}${reviewText}\n\n<runbook-procedure>\n${procedure}\n</runbook-procedure>`,
     };
   });
 
@@ -1032,7 +1043,6 @@ export default function runbooksExtension(pi: ExtensionAPI) {
             const theme = ctx.ui.theme;
             const lines = [
               theme.fg("accent", theme.bold(activeRun.runbookName)),
-              `Run ID: ${activeRun.runId}`,
               `Status: ${activeRun.status} · Stage: ${activeRun.currentStage ?? "not set"}`,
             ];
             if (activeRun.pendingGate) {
@@ -1085,7 +1095,7 @@ export default function runbooksExtension(pi: ExtensionAPI) {
         if (command === "record") {
           let name = words.shift();
           if (words.length > 0) throw new Error("Usage: /runbook record [runbook-name]");
-          if (activeRun) throw new Error(`Run ${activeRun.runId} is already active. Finish or abort it before recording the surrounding session.`);
+          if (activeRun) throw new Error(`The ${activeRun.runbookName} runbook is already active. Finish or abort it before recording the surrounding session.`);
           await ctx.waitForIdle();
           const originalPrompt = firstUserText(ctx);
           const branch = ctx.sessionManager.getBranch();
@@ -1233,8 +1243,9 @@ export default function runbooksExtension(pi: ExtensionAPI) {
           return;
         }
         if (command === "draft") {
-          const runId = words.shift();
-          if (!runId) throw new Error("Usage: /runbook draft <runId> [destination]");
+          if (words.length > 1) throw new Error("Usage: /runbook draft [destination]");
+          const runId = assignmentRunIds(ctx).at(-1);
+          if (!runId) throw new Error("No runbook run is assigned to this session branch");
           await startDraft(runId, words[0], ctx);
           return;
         }
@@ -1426,29 +1437,6 @@ export default function runbooksExtension(pi: ExtensionAPI) {
           await startDraft(completedRun.runId, undefined, ctx, "automatic");
           return;
         }
-        if (command === "resume") {
-          const runId = words[0];
-          if (!runId) throw new Error("Usage: /runbook resume <runId>");
-          if (activeRun) throw new Error(`Run ${activeRun.runId} is already active`);
-          const run = await runs.read(runId);
-          if (run.status !== "running" && run.status !== "paused" && run.status !== "review") throw new Error(`Run is terminal: ${run.status}`);
-          await artifacts.verify(run.artifactDigest);
-          await runs.attach(run, ctx.sessionManager.getSessionId(), ctx.sessionManager.getSessionFile());
-          await setActive(run, ctx);
-          await appendFact(ctx, { type: "RUN_RESUMED", reason: "explicitly attached to this Pi session" });
-          const theme = ctx.ui.theme;
-          ctx.ui.notify([
-            theme.fg("success", theme.bold(`Resumed ${run.runbookName}`)),
-            `Run ID: ${theme.fg("accent", run.runId)}`,
-            `Status: ${run.status} · Stage: ${run.currentStage ?? "not set"}`,
-            run.pendingGate
-              ? theme.fg("warning", `Waiting for approval: ${run.pendingGate.prompt}\nUse /runbook approve to continue.`)
-              : run.status === "review"
-                ? theme.fg("accent", "This run is ready for review. Ask follow-up questions, request changes, or use /runbook close when satisfied.")
-                : theme.fg("muted", "Continue the workflow in this session. Use /runbook status to check progress."),
-          ].join("\n"), "info");
-          return;
-        }
         if (command === "abort") {
           if (!activeRun) throw new Error("No active runbook run");
           activeRun.status = "abandoned";
@@ -1559,7 +1547,6 @@ export default function runbooksExtension(pi: ExtensionAPI) {
           const theme = ctx.ui.theme;
           const lines = [
             theme.fg("accent", theme.bold(activeRun.runbookName)),
-            `Run ID: ${activeRun.runId}`,
             `Status: ${activeRun.status} · Stage: ${activeRun.currentStage ?? "not set"}`,
             `Artifact: ${activeRun.artifactDigest.slice(0, 12)}…`,
           ];
@@ -1575,10 +1562,10 @@ export default function runbooksExtension(pi: ExtensionAPI) {
               theme.fg("accent", "The proposed result is ready for review."),
               theme.fg("text", "Ask follow-up questions or request changes; the pinned runbook and its safety policy stay active."),
               `Close only when satisfied: ${theme.fg("success", "/runbook close")}`,
-              theme.fg("muted", `If you change sessions: /runbook resume ${activeRun.runId}`),
+              theme.fg("muted", "Quit safely and reopen this same Pi session later to continue."),
             );
           } else {
-            lines.push("", theme.fg("muted", `If you change sessions, continue with /runbook resume ${activeRun.runId}`));
+            lines.push("", theme.fg("muted", "Quit safely and reopen this same Pi session later to continue."));
           }
           ctx.ui.notify(lines.join("\n"), "info");
         } else {

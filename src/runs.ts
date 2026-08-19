@@ -11,7 +11,6 @@ export interface StartRunInput {
   cwd: string;
   sessionId: string;
   sessionFile?: string;
-  branchRootEntryId?: string;
   originalPrompt: string;
   toolAttestations: ToolAttestation[];
 }
@@ -46,7 +45,6 @@ export class RunStore {
       toolAttestations: input.toolAttestations,
     };
     if (input.sessionFile) run.sessionFile = input.sessionFile;
-    if (input.branchRootEntryId) run.branchRootEntryId = input.branchRootEntryId;
     await atomicWriteJson(this.path(run.runId), run);
     return run;
   }
@@ -68,16 +66,20 @@ export class RunStore {
     return Promise.all(files.map((name) => readJson<RunbookRun>(join(this.root, name))));
   }
 
-  async activeForSession(sessionId: string): Promise<RunbookRun[]> {
-    return (await this.list()).filter((run) => run.sessionId === sessionId && (run.status === "running" || run.status === "paused" || run.status === "review"));
+  async activeForAssignments(runIds: readonly string[], sessionId: string): Promise<RunbookRun | undefined> {
+    const runId = runIds.at(-1);
+    if (!runId) return undefined;
+    let run: RunbookRun;
+    try {
+      run = await this.read(runId);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" || (error as Error).message === "Invalid run ID") return undefined;
+      throw error;
+    }
+    if (run.sessionId !== sessionId) return undefined;
+    return run.status === "running" || run.status === "paused" || run.status === "review" ? run : undefined;
   }
 
-  async attach(run: RunbookRun, sessionId: string, sessionFile?: string): Promise<void> {
-    run.sessionId = sessionId;
-    if (sessionFile) run.sessionFile = sessionFile;
-    else delete run.sessionFile;
-    await this.save(run);
-  }
 }
 
 export async function evaluatePredicates(contract: RunbookContract, cwd: string): Promise<PredicateResult[]> {

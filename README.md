@@ -75,6 +75,8 @@ A controlled run may use checkpoints and approval gates. When Pi marks it ready 
 
 Pi can then propose a reusable workflow or a revision based on the run. You decide whether to approve it.
 
+If Pi is quit during a running, paused, or review-ready run, reopening that Pi session—including with `pi --session <path|id>`—automatically restores the run from its assignment on the current session branch. Its pinned artifact, stage, gate, policy, and governed tools remain active. Run IDs are internal implementation details; users resume the Pi session, not a separate runbook object.
+
 ## Common commands
 
 | Command | Purpose |
@@ -89,7 +91,6 @@ Pi can then propose a reusable workflow or a revision based on the run. You deci
 | `/runbook approve` | Approve the pending workflow gate. |
 | `/runbook close` | Close a reviewed run and begin learning. |
 | `/runbook abort [reason]` | Abandon the active run. |
-| `/runbook resume <run-id>` | Attach an existing run to the current session. |
 | `/runbook edit <name>` | Create an editable candidate from an approved release. |
 | `/runbook instruct <name> <instruction>` | Propose one persistent instruction. |
 | `/runbook rollback <name>` | Restore the previous personal release. |
