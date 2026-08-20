@@ -25,6 +25,7 @@ import {
   hashArguments,
   POLICY_VERSION,
   verifyToolAttestations,
+  type PolicyDecision,
   type ToolMetadata,
 } from "../src/policy.js";
 import type { LedgerFact, RunbookContract, RunbookRun } from "../src/types.js";
@@ -95,6 +96,35 @@ function parseWords(input: string): string[] {
 function suggestedRunbookName(request: string): string {
   const slug = request.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48).replace(/-$/g, "");
   return slug || "reusable-workflow";
+}
+
+function conciseContext(value: string, limit = 300): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > limit ? `${normalized.slice(0, limit - 1)}…` : normalized;
+}
+
+export function approvalExplanation(
+  decision: PolicyDecision,
+  actionLabel: string,
+  action: string,
+  run: RunbookRun,
+  contract: RunbookContract,
+  directlyEntered = false,
+): string {
+  const details = decision.approvalDetails;
+  const purpose = details?.purpose.map((item) => `- ${item}`).join("\n")
+    ?? "- Perform the exact action shown below.";
+  const risks = details?.risks.map((item) => `- ${item}`).join("\n")
+    ?? `- ${decision.reason}`;
+  const stage = run.currentStage ? `, currently at stage “${run.currentStage}”` : "";
+  const need = directlyEntered
+    ? "You entered this command directly; approval is required before the active runbook allows it to execute."
+    : `The agent requested this while running “${run.runbookName}”${stage}. The workflow goal is “${conciseContext(contract.description)}”, for the current request “${conciseContext(run.originalPrompt)}”.`;
+  const inferenceWarning = directlyEntered
+    ? ""
+    : "\nThis context explains why the action was requested, but does not prove it is necessary. Confirm that the action and target match the workflow goal.";
+
+  return `What it tries to accomplish:\n${purpose}\n\nWhy it is needed:\n${need}${inferenceWarning}\n\nRisks if approved:\n${risks}\n\nWhy approval was triggered:\n${decision.reason}\n\nExact ${actionLabel}:\n${action}\n\nApproval is one-time and applies only to this exact action.`;
 }
 
 function firstUserText(ctx: ExtensionContext): string | undefined {
@@ -684,8 +714,8 @@ export default function runbooksExtension(pi: ExtensionAPI) {
           ? String(input.path ?? "")
           : JSON.stringify(input, null, 2);
       const approved = await ctx.ui.confirm(
-        `Allow this ${event.toolName} action once?`,
-        `Reason: ${decision.reason}\n\nAction:\n${action}\n\nRunbook: ${activeRun.runbookName}\nThis approval applies only to this exact action.`,
+        `Review and allow this ${event.toolName} action once?`,
+        approvalExplanation(decision, event.toolName === "bash" ? "command" : "action", action, activeRun, activeContract),
       );
       if (!approved) {
         blockedCalls.add(event.toolCallId);
@@ -728,8 +758,8 @@ export default function runbooksExtension(pi: ExtensionAPI) {
     }
     if (decision.decision === "require_approval") {
       const approved = await ctx.ui.confirm(
-        "Allow this shell command once?",
-        `Reason: ${decision.reason}\n\nCommand:\n${event.command}\n\nThis approval applies only to this exact command.`,
+        "Review and allow this shell command once?",
+        approvalExplanation(decision, "command", event.command, activeRun, activeContract, true),
       );
       if (!approved) {
         await appendFact(ctx, { type: "USER_REJECTED", toolName: "user_bash", argsHash, enforcementLevel: "observed", policyVersion: POLICY_VERSION, reason: decision.reason });

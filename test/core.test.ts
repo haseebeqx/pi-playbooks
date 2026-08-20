@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import runbooksExtension from "../extensions/runbooks.js";
+import runbooksExtension, { approvalExplanation } from "../extensions/runbooks.js";
 import { ArtifactStore } from "../src/artifacts.js";
 import { CANDIDATE_METADATA_FILE, listProjectCandidates, selectProjectCandidate, writeCandidateMetadata } from "../src/candidates.js";
 import { validateContract, isApplicable } from "../src/contract.js";
@@ -539,14 +539,34 @@ test("success predicates and effect policy fail closed", async () => {
   assert.equal(decide(parsed, "write", { path: "x" }).decision, "deny");
   const destructive = decide(parsed, "bash", { command: "sudo rm -rf /tmp/x" });
   assert.equal(destructive.decision, "require_approval");
-  assert.match(destructive.reason, /privileged, destructive/);
+  assert.match(destructive.reason, /privilege elevation \(sudo\).*file deletion \(rm\)/);
+  assert.match(destructive.approvalDetails?.purpose.join(" ") ?? "", /elevated.*Delete/s);
+  assert.match(destructive.approvalDetails?.risks.join(" ") ?? "", /system-wide.*recover/s);
   assert.equal(decide(parsed, "bash", { command: "rm -r -f /tmp/x" }).decision, "require_approval");
   const adHoc = validateContract(contract({ allowedEffectClasses: ["*"] }));
-  assert.equal(decide(adHoc, "bash", { command: "terraform apply plan.tfplan" }).decision, "require_approval");
-  assert.equal(decide(adHoc, "bash", { command: "aws cloudformation deploy --stack-name app" }).decision, "require_approval");
+  const terraform = decide(adHoc, "bash", { command: "terraform apply plan.tfplan" });
+  assert.equal(terraform.decision, "require_approval");
+  assert.match(terraform.approvalDetails?.purpose[0] ?? "", /managed infrastructure/);
+  assert.match(terraform.approvalDetails?.risks[0] ?? "", /downtime, data loss, or cost changes/);
+  const aws = decide(adHoc, "bash", { command: "aws cloudformation deploy --stack-name app" });
+  assert.equal(aws.decision, "require_approval");
+  assert.match(aws.approvalDetails?.purpose[0] ?? "", /selected AWS account and region/);
   const protectedWrite = decide(adHoc, "edit", { path: ".env" });
   assert.equal(protectedWrite.decision, "require_approval");
   assert.match(protectedWrite.reason, /protected path \.env/);
+
+  const explanation = approvalExplanation(
+    terraform,
+    "command",
+    "terraform apply plan.tfplan",
+    { runbookName: "deploy-app", originalPrompt: "Deploy the reviewed plan", currentStage: "deployment" } as any,
+    { description: "Deploy the application infrastructure" } as any,
+  );
+  assert.match(explanation, /What it tries to accomplish:/);
+  assert.match(explanation, /Why it is needed:/);
+  assert.match(explanation, /workflow goal.*Deploy the application infrastructure/s);
+  assert.match(explanation, /Risks if approved:.*downtime, data loss, or cost changes/s);
+  assert.match(explanation, /Exact command:\nterraform apply plan\.tfplan/);
 });
 
 test("run artifacts cannot resolve through symlinks outside the run directory", async () => {
