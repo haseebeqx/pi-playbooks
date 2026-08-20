@@ -4,104 +4,209 @@
 [![npm downloads](https://img.shields.io/npm/dm/%40haseebeqx%2Fpi-runbooks)](https://www.npmjs.com/package/@haseebeqx/pi-runbooks)
 [![Node.js](https://img.shields.io/node/v/%40haseebeqx%2Fpi-runbooks)](package.json)
 [![License](https://img.shields.io/npm/l/%40haseebeqx%2Fpi-runbooks)](LICENSE)
-[![Publish to npm](https://github.com/haseebeqx/pi-runbooks/actions/workflows/publish.yml/badge.svg)](https://github.com/haseebeqx/pi-runbooks/actions/workflows/publish.yml)
 
-A [Pi](https://pi.dev) extension for turning repeatable work into versioned, governed workflows.
+A [Pi](https://pi.dev) plugin for turning work you do with Pi into reusable, reviewed workflows.
 
-Pi Runbooks can record successful sessions, run reusable procedures, pause at approval gates, verify required outputs, and propose evidence-based improvements. Every run is pinned to an immutable snapshot, and no proposed revision is activated without your approval.
+Use Pi Runbooks to:
+
+- repeat a successful workflow without rewriting the prompt;
+- keep long-running work pinned to the same procedure;
+- pause at explicit review gates;
+- require files or other outputs before a run can succeed;
+- improve a workflow from evidence gathered during real runs;
+- approve every revision before it becomes the version used in the future.
 
 > [!IMPORTANT]
-> Pi extensions run with your normal system permissions. Review this package and any runbook you install.
+> Pi plugins run with your normal system permissions. A runbook adds workflow controls, but it is not a security sandbox. Review this plugin and any runbook you use.
 
 ## Install
 
 Requirements:
 
 - Node.js 22.19.0 or newer
-- Pi (tested with Pi 0.84.2)
+- Pi (currently tested with Pi 0.84.2)
 
-Install from npm:
+Install the plugin from npm:
 
 ```sh
 pi install npm:@haseebeqx/pi-runbooks
 ```
 
-To update or remove it:
+Restart Pi if the `/runbook` command does not appear immediately.
+
+Update or remove the plugin with:
 
 ```sh
 pi update npm:@haseebeqx/pi-runbooks
 pi remove npm:@haseebeqx/pi-runbooks
 ```
 
-## Quick start
+## Create your first runbook
 
-### Record work you already completed
+### Start with a new task
 
-Work normally in Pi, then turn the current session into a reusable runbook:
-
-```text
-/runbook record release-check
-```
-
-Pi reviews the session, proposes a candidate only when it finds a reusable workflow, and asks for approval before activating it.
-
-Run the approved runbook later with:
+Name the workflow and tell Pi what to do:
 
 ```text
-/runbook run release-check
+/runbook run dependency-audit Inspect this project for outdated and vulnerable dependencies, then write a report
 ```
 
-Recording requires an interactive Pi session with prior work to inspect. It can use the entire current session, so do not record material you do not want reflected in a generated candidate.
+If `dependency-audit` does not exist yet, the plugin starts it as a new governed workflow. Work with Pi normally: answer questions, give feedback, and request changes.
 
-### Start a governed run
-
-Start interactively:
-
-```text
-/runbook
-```
-
-Or start a named run directly:
-
-```text
-/runbook run release-check Check whether this repository is ready for release
-```
-
-A controlled run may use checkpoints and approval gates. When Pi marks it ready for review, close it with:
+When Pi considers the work complete, the run stays open for your review. Ask follow-up questions or request edits, then close it when satisfied:
 
 ```text
 /runbook close
 ```
 
-Pi can then propose a reusable workflow or a revision based on the run. You decide whether to approve it.
+The plugin analyzes the completed run. It either reports that no reusable change is supported or prepares a runbook candidate. The candidate becomes the version used by future runs only if you approve it.
 
-If Pi is quit during a running, paused, or review-ready run, reopening that Pi session—including with `pi --session <path|id>`—automatically restores the run from its assignment on the current session branch. Its pinned artifact, stage, gate, policy, and governed tools remain active. Run IDs are internal implementation details; users resume the Pi session, not a separate runbook object.
+Run the approved workflow again later:
 
-## Common commands
+```text
+/runbook run dependency-audit
+```
 
-| Command | Purpose |
+### Capture work you already completed
+
+After completing useful work in a normal Pi session, turn that session into a reusable workflow:
+
+```text
+/runbook record dependency-audit
+```
+
+The plugin asks before inspecting the session, extracts a generalized candidate, and presents it for approval. Recording may use the entire current session branch, not only the latest request, so review the confirmation carefully if the session contains secrets, personal data, or unrelated work.
+
+You can also omit the name and let Pi prompt for one:
+
+```text
+/runbook record
+```
+
+## During a run
+
+A run remains attached to the Pi session branch where it started. Its procedure, allowed effects, tools, stage, and pending gate remain active until you close or abort it.
+
+### Check progress
+
+```text
+/runbook status
+```
+
+Running `/runbook` with no arguments also shows the active run, or starts an interactive workflow when no run is active.
+
+### Approve a workflow gate
+
+A runbook may pause before moving to its next stage—for example, after preparing a plan:
+
+```text
+/runbook approve
+```
+
+You can ask for changes instead of approving. A workflow gate advances the procedure; it does not pre-authorize later high-risk actions. Those actions may still require separate confirmation.
+
+### Review and close
+
+When Pi submits an outcome for review, the run is still active. Continue the conversation and request any needed changes. When the result is final:
+
+```text
+/runbook close
+```
+
+Closing records the result and starts evidence-based learning. If you do not want to continue a run:
+
+```text
+/runbook abort optional reason
+```
+
+### Resume after restarting Pi
+
+Reopen the same Pi session, including with `pi --session <path|id>`. Running, paused, and review-ready workflows are restored automatically on their assigned session branch. You do not need to manage a separate run ID.
+
+## Manage your runbooks
+
+List approved runbooks, local candidates, and pending proposals:
+
+```text
+/runbook list
+/runbook list --details
+```
+
+Add a lasting instruction to an approved runbook:
+
+```text
+/runbook instruct dependency-audit Always include remediation priorities
+```
+
+The instruction is proposed as a revision and requires approval before future runs use it.
+
+Create an editable copy of an approved runbook:
+
+```text
+/runbook edit dependency-audit
+```
+
+Return future runs to the previously approved personal version:
+
+```text
+/runbook rollback dependency-audit
+```
+
+An active run remains pinned to the version with which it started, even if another version is approved or restored.
+
+Runbook names use lowercase letters, numbers, and single hyphens, such as `dependency-audit`.
+
+## Use runbooks with Pi skills
+
+Convert a currently loaded Pi Agent Skill, or a skill directory containing `SKILL.md`, into an editable runbook candidate:
+
+```text
+/runbook from-skill pdf-tools
+/runbook from-skill path/to/my-skill
+```
+
+Review the generated contract—especially its required tools and allowed effects—then use the proposal command shown by Pi.
+
+Export an approved runbook as a standalone Pi skill:
+
+```text
+/runbook to-skill dependency-audit
+/runbook to-skill dependency-audit path/to/dependency-audit-skill
+```
+
+The exported skill includes `SKILL.md` and bundled support files. It does **not** include runbook pinning, gates, policy checks, output verification, or evidence tracking.
+
+## Command reference
+
+| Command | What it does |
 |---|---|
-| `/runbook` | Start interactively or show the active run. |
+| `/runbook` | Show the active run or start a new workflow interactively. |
+| `/runbook run <name> [request]` | Run an approved runbook or local candidate, or create a named workflow. |
 | `/runbook record [name]` | Extract a reusable workflow from the current session. |
-| `/runbook from-skill <name\|directory> [destination]` | Convert a loaded Pi Agent Skill into an editable runbook candidate. |
-| `/runbook to-skill <name> [destination]` | Export an approved runbook as a standalone Pi Agent Skill. |
-| `/runbook run <name> [request]` | Run an approved runbook, candidate, or new governed workflow. |
-| `/runbook status` | Show the active run and pending gate. |
-| `/runbook list [--details]` | List runbook names and statuses. Add `--details` for descriptions, paths, IDs, and actions. |
-| `/runbook approve` | Approve the pending workflow gate. |
-| `/runbook close` | Close a reviewed run and begin learning. |
+| `/runbook status` | Show the active run, stage, and pending gate. |
+| `/runbook approve` | Approve the current workflow gate. |
+| `/runbook close` | Close a reviewed run and start learning. |
 | `/runbook abort [reason]` | Abandon the active run. |
-| `/runbook edit <name>` | Create an editable candidate from an approved release. |
-| `/runbook instruct <name> <instruction>` | Propose one persistent instruction. |
-| `/runbook rollback <name>` | Restore the previous personal release. |
+| `/runbook list [--details]` | List runbooks, candidates, and proposals. |
+| `/runbook instruct <name> <instruction>` | Propose a persistent instruction for future runs. |
+| `/runbook edit <name> [destination]` | Create an editable candidate from an approved runbook. |
+| `/runbook rollback <name>` | Restore the previous personal version for future runs. |
+| `/runbook from-skill <name\|directory> [destination]` | Convert a Pi skill into a runbook candidate. |
+| `/runbook to-skill <name> [destination]` | Export an approved runbook as a Pi skill. |
 
-Use `/runbook <unknown-command>` in Pi to display the complete built-in command help, including advanced proposal and artifact commands.
+Enter an unknown subcommand, such as `/runbook help`, to see Pi's complete built-in command help. It also lists advanced commands for manually sealing, verifying, proposing, promoting, and rejecting artifacts.
 
-Runbook names use lowercase letters, numbers, and single hyphens, such as `release-check`.
+## How approval and learning work
 
-## Runbook format
+Each run uses an immutable snapshot of its runbook. Completing a run does not overwrite that snapshot or alter the approved version.
 
-A minimal runbook contains:
+After you close a reviewed run, the plugin summarizes run-scoped evidence and asks Pi whether the workflow should change. Supported changes become a candidate that must pass deterministic checks and receive your explicit approval. Stale candidates and candidates without the required evidence are not promoted.
+
+The evidence ledger stores minimized facts and argument hashes rather than raw tool arguments. During learning, the plugin may transiently inspect run-bounded shell commands and outcomes to identify a supported deterministic shortcut; command output is omitted and likely inline credentials are redacted. This does not make recording or learning safe for secrets—continue to review what you share with Pi and what a candidate contains.
+
+## Use an existing runbook project
+
+A runbook usually contains:
 
 ```text
 my-runbook/
@@ -109,65 +214,28 @@ my-runbook/
 └── runbook.json
 ```
 
-`RUNBOOK.md` is the model-facing procedure. `runbook.json` declares metadata, required tools, allowed effects, outputs, and deterministic success checks. Runbooks may also include scripts, references, templates, and sealed Agent Skill dependencies.
+`RUNBOOK.md` tells Pi how to perform the workflow. `runbook.json` declares when it applies, which tools and effect classes it may use, its workflow gates, required artifacts, and success checks. A runbook can also bundle scripts, references, templates, and optional Pi skill dependencies.
 
-See [Runbook contract v1](docs/RUNBOOK_FORMAT.md) for the complete format and [Architecture](docs/ARCHITECTURE.md) for storage, lifecycle, policy, and trust-boundary details.
-
-To activate the first version of a manually authored runbook:
+Trusted projects can provide local candidates under `.pi/runbooks/candidates/`. Run one by its contract name or candidate directory name:
 
 ```text
-/runbook seal path/to/my-runbook
-/runbook promote <digest-printed-by-seal>
+/runbook run staged-research
 ```
 
-Updates to an approved runbook go through the candidate review flow. An example is available in [`examples/research-runbook`](examples/research-runbook).
+See the included [`staged-research` example](examples/research-runbook), the [runbook contract reference](docs/RUNBOOK_FORMAT.md), and the [architecture and trust boundaries](docs/ARCHITECTURE.md) for details.
 
-### Convert to and from Pi skills
+## Safety and limitations
 
-Import a loaded skill by name, or a skill directory containing `SKILL.md`, as an editable candidate:
+Pi Runbooks can verify immutable runbook content, limit declared effect classes, pause at workflow gates, ask for selected high-risk action approvals, hash declared outputs, and enforce deterministic output checks.
 
-```text
-/runbook from-skill pdf-tools
-/runbook from-skill path/to/my-skill
-```
+It cannot:
 
-Names are resolved from Pi's currently loaded skills, including global, project, package, settings, and CLI skill sources.
+- isolate Pi or other plugins from your operating system;
+- constrain arbitrary code running with the same user permissions;
+- guarantee that every external side effect is observable;
+- make an untrusted procedure, script, skill, or command safe.
 
-The generated `runbook.json` uses explicit invocation and broad effect declarations because a skill does not carry a runbook governance contract. Review those fields, then submit the candidate using the command Pi displays.
-
-Export an approved runbook into the project's `.pi/skills/` directory (or pass a destination):
-
-```text
-/runbook to-skill release-check
-/runbook to-skill release-check path/to/release-check-skill
-```
-
-The export writes a standards-compatible `SKILL.md` plus bundled scripts and references. Runbook-only governance metadata is omitted, so using the exported skill does not provide runbook pinning, gates, policy enforcement, or evidence tracking.
-
-## Safety
-
-Pi Runbooks provides workflow governance, not an operating-system sandbox. It can pin and verify runbook snapshots, restrict declared effect classes, request approval for selected high-risk actions, enforce workflow gates, hash checkpoint artifacts, and check required outputs. It cannot constrain arbitrary code in other extensions or guarantee that every external side effect is observable.
-
-## Development
-
-```sh
-npm install
-npm run verify
-```
-
-## Releasing
-
-The npm trusted publisher for this package must use these exact values:
-
-- Organization or user: `haseebeqx`
-- Repository: `pi-runbooks`
-- Workflow: `publish.yml`
-- Environment: none
-- Allowed action: publish
-
-For a release, update the version in `package.json` and `package-lock.json` together, run `npm run verify`, then push the commit and matching `v<version>` tag. Publishing the matching GitHub Release runs [the publication workflow](.github/workflows/publish.yml), which publishes to npm with short-lived OIDC credentials and provenance.
-
-A new npm package generally needs an initial manual publication before its package-level trusted publisher can be configured. `@haseebeqx/pi-runbooks` has already been published, so configure or verify the trusted publisher before publishing a GitHub Release. Do not add an `NPM_TOKEN` to the workflow.
+Treat runbooks as reviewed automation: inspect unfamiliar workflows, protect credentials, and keep normal backups and source control practices.
 
 ## License
 
