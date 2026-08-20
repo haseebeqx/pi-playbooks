@@ -28,11 +28,14 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
+      - name: Install supported npm CLI
+        run: npm install --global npm@11.6.1
+
       - name: Install dependencies
         run: npm ci
 
       - name: Validate package
-        run: npm run check && npm test
+        run: npm run verify
 
       - name: Verify tag matches package version
         shell: bash
@@ -59,4 +62,4 @@ jobs:
 
       - name: Publish to npm
         if: steps.published.outputs.skip != 'true'
-        run: npm publish --access public
+        run: npm publish --access public --provenance

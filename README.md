@@ -152,9 +152,22 @@ Pi Runbooks provides workflow governance, not an operating-system sandbox. It ca
 
 ```sh
 npm install
-npm run check
-npm test
+npm run verify
 ```
+
+## Releasing
+
+The npm trusted publisher for this package must use these exact values:
+
+- Organization or user: `haseebeqx`
+- Repository: `pi-runbooks`
+- Workflow: `publish.yml`
+- Environment: none
+- Allowed action: publish
+
+For a release, update the version in `package.json` and `package-lock.json` together, run `npm run verify`, then push the commit and matching `v<version>` tag. Publishing the matching GitHub Release runs [the publication workflow](.github/workflows/publish.yml), which publishes to npm with short-lived OIDC credentials and provenance.
+
+A new npm package generally needs an initial manual publication before its package-level trusted publisher can be configured. `@haseebeqx/pi-runbooks` has already been published, so configure or verify the trusted publisher before publishing a GitHub Release. Do not add an `NPM_TOKEN` to the workflow.
 
 ## License
 

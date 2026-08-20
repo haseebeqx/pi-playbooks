@@ -1,6 +1,6 @@
 {
   "name": "@haseebeqx/pi-runbooks",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Versioned, governed, self-improving runbooks for Pi",
   "type": "module",
   "license": "MIT",
@@ -39,7 +39,8 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
-    "prepublishOnly": "npm run check && npm test"
+    "verify": "npm run check && npm test",
+    "prepublishOnly": "npm run verify"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
