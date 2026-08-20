@@ -1123,22 +1123,9 @@ export default function runbooksExtension(pi: ExtensionAPI) {
           for (const name of teamNames) add(name, "team approved");
         }
 
-        if (command === "run" && completionProjectTrusted && completionCwd) {
-          const candidates = await listProjectCandidates(
-            join(completionCwd, CONFIG_DIR_NAME, "runbooks", "candidates"),
-          );
-          const valid = candidates.filter((candidate) => candidate.contract);
-          const counts = new Map<string, number>();
-          for (const candidate of valid) {
-            const name = candidate.contract!.name;
-            counts.set(name, (counts.get(name) ?? 0) + 1);
-          }
-          for (const candidate of valid) {
-            const name = candidate.contract!.name;
-            if (counts.get(name) === 1) add(name, "local candidate");
-            else add(candidate.directoryName, `local candidate for ${name}`);
-          }
-        }
+        // Argument completion intentionally lists only approved release pointers.
+        // Editable candidates are alternative versions and remain available by
+        // explicitly entering their name or directory when running one.
 
         const items = [...sources.entries()]
           .filter(([name]) => name.startsWith(namePrefix))

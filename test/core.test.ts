@@ -3,7 +3,7 @@ import { chmod, lstat, mkdtemp, mkdir, readFile, symlink, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import runbooksExtension, { approvalExplanation, workflowGateExplanation } from "../extensions/runbooks.js";
 import { ArtifactStore } from "../src/artifacts.js";
 import { CANDIDATE_METADATA_FILE, listProjectCandidates, selectProjectCandidate, writeCandidateMetadata } from "../src/candidates.js";
@@ -61,24 +61,44 @@ async function fixture() {
   return { root, source, home: join(root, "home") };
 }
 
-test("runbook command completes approved names without invoking the model", async () => {
+test("runbook command completes only approved names without invoking the model", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-runbooks-completion-"));
   const home = join(root, "home");
   await new ReleaseRegistry(join(home, "registry.json")).promote("release-check", "a".repeat(64));
+  const candidate = join(root, CONFIG_DIR_NAME, "runbooks", "candidates", "release-check-edit");
+  await mkdir(candidate, { recursive: true });
+  await writeFile(join(candidate, "runbook.json"), `${JSON.stringify(contract({ version: "0.2.0" }), null, 2)}\n`, "utf8");
 
   let getArgumentCompletions: ((prefix: string) => Promise<Array<{ value: string; label: string }> | null>) | undefined;
+  let sessionStart: ((event: unknown, ctx: any) => Promise<void>) | undefined;
   const api = {
-    on: () => {},
+    on: (name: string, handler: (event: unknown, ctx: any) => Promise<void>) => {
+      if (name === "session_start") sessionStart = handler;
+    },
     registerTool: () => {},
     registerCommand: (_name: string, options: { getArgumentCompletions: typeof getArgumentCompletions }) => {
       getArgumentCompletions = options.getArgumentCompletions;
     },
+    getActiveTools: () => [],
+    setActiveTools: () => {},
   } as unknown as ExtensionAPI;
 
   const previousHome = process.env.PI_RUNBOOKS_HOME;
   process.env.PI_RUNBOOKS_HOME = home;
   try {
     runbooksExtension(api);
+    await sessionStart?.({}, {
+      cwd: root,
+      isProjectTrusted: () => true,
+      sessionManager: {
+        getBranch: () => [],
+        getSessionId: () => "completion-session",
+      },
+      ui: {
+        setStatus: () => {},
+        setWidget: () => {},
+      },
+    });
   } finally {
     if (previousHome === undefined) delete process.env.PI_RUNBOOKS_HOME;
     else process.env.PI_RUNBOOKS_HOME = previousHome;
