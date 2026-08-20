@@ -127,6 +127,23 @@ export function approvalExplanation(
   return `What it tries to accomplish:\n${purpose}\n\nWhy it is needed:\n${need}${inferenceWarning}\n\nRisks if approved:\n${risks}\n\nWhy approval was triggered:\n${decision.reason}\n\nExact ${actionLabel}:\n${action}\n\nApproval is one-time and applies only to this exact action.`;
 }
 
+export function workflowGateExplanation(run: RunbookRun, contract: RunbookContract): string {
+  if (!run.pendingGate) throw new Error("No workflow gate is pending");
+  const gate = run.pendingGate;
+  const stage = gate.stage ?? run.currentStage ?? "unspecified stage";
+  const summary = gate.summary
+    ? conciseContext(gate.summary, 500)
+    : "No separate checkpoint summary was recorded.";
+  const artifacts = gate.artifactPaths?.length
+    ? gate.artifactPaths.map((path) => `- ${path}`).join("\n")
+    : "- No checkpoint artifacts were declared.";
+  const effects = contract.allowedEffectClasses.includes("*")
+    ? "any effect needed by the governed workflow, subject to separate high-risk action approvals"
+    : contract.allowedEffectClasses.join(", ") || "no declared effects";
+
+  return `Decision requested:\n${gate.prompt}\n\nWhat has been completed:\nStage: ${stage}\n${summary}\n\nWhy continuation is requested:\nThis gate belongs to “${run.runbookName}”, whose goal is “${conciseContext(contract.description)}”, for the current request “${conciseContext(run.originalPrompt)}”.\n\nWhat approval does:\n- Releases only this workflow gate and allows Pi to continue to later stages.\n- Later work remains limited by the runbook policy (${effects}).\n- Approval does not pre-approve a command, deployment, publication, or other high-risk action; those still require their own review.\n\nPotential consequences:\n- Pi may perform later workflow stages and produce additional local or external effects allowed by the runbook.\n- Approval does not guarantee that the completed stage is correct; verify the decision request and checkpoint summary before continuing.\n\nCheckpoint artifacts:\n${artifacts}\n\nIf you do not approve, the workflow remains paused and you can request changes.`;
+}
+
 function firstUserText(ctx: ExtensionContext): string | undefined {
   for (const entry of ctx.sessionManager.getBranch()) {
     if (entry.type !== "message" || entry.message.role !== "user") continue;
@@ -226,9 +243,11 @@ export default function runbooksExtension(pi: ExtensionAPI) {
     // reminder and let /runbook status provide details on demand.
     if (run?.pendingGate) {
       ctx.ui.setWidget("pi-runbooks-approval", [
-        `Approval required · ${run.runbookName}`,
-        run.pendingGate.prompt,
-        "Use /runbook approve to continue, or send a message describing the changes you want.",
+        `Approval required · ${run.runbookName} · ${run.pendingGate.stage ?? run.currentStage ?? "workflow gate"}`,
+        `Decision: ${run.pendingGate.prompt}`,
+        ...(run.pendingGate.summary ? [`Checkpoint: ${conciseContext(run.pendingGate.summary, 180)}`] : []),
+        "Approval releases this gate only; high-risk actions still require separate review.",
+        "Use /runbook approve for full details, or send a message describing the changes you want.",
       ]);
     } else {
       ctx.ui.setWidget("pi-runbooks-approval", undefined);
@@ -328,6 +347,21 @@ export default function runbooksExtension(pi: ExtensionAPI) {
     await runs.save(activeRun);
     await appendFact(ctx, { type: "GATE_APPROVED", reason: gate.id, data: { gatePromptHash: hashArguments(gate.prompt) } });
     await setActive(activeRun, ctx);
+  };
+
+  const confirmGateApproval = async (ctx: ExtensionContext): Promise<boolean> => {
+    if (!activeRun?.pendingGate || activeRun.status !== "paused" || !activeContract) {
+      throw new Error("No runbook approval gate is pending");
+    }
+    if (ctx.hasUI) {
+      const approved = await ctx.ui.confirm(
+        `Approve workflow gate “${activeRun.pendingGate.id}” and continue?`,
+        workflowGateExplanation(activeRun, activeContract),
+      );
+      if (!approved) return false;
+    }
+    await approveGate(ctx);
+    return true;
   };
 
   const requestGateRevision = async (ctx: ExtensionContext, revision?: string): Promise<void> => {
@@ -606,7 +640,7 @@ export default function runbooksExtension(pi: ExtensionAPI) {
   pi.on("input", async (event, ctx) => {
     if (activeRun?.status === "paused" && activeRun.pendingGate) {
       if (event.text.trim().toLowerCase() === "approved") {
-        await approveGate(ctx);
+        await confirmGateApproval(ctx);
       } else {
         await requestGateRevision(ctx, event.text.trim());
       }
@@ -945,7 +979,14 @@ export default function runbooksExtension(pi: ExtensionAPI) {
       activeRun.currentStage = params.stage;
       if (params.gate) {
         activeRun.status = "paused";
-        activeRun.pendingGate = { id: params.gate.id, prompt: params.gate.prompt, requestedAt: new Date().toISOString() };
+        activeRun.pendingGate = {
+          id: params.gate.id,
+          prompt: params.gate.prompt,
+          requestedAt: new Date().toISOString(),
+          stage: params.stage,
+          summary: params.summary,
+          artifactPaths: artifactHashes.map(({ path }) => path),
+        };
       }
       await runs.save(activeRun);
       await appendFact(ctx, {
@@ -961,24 +1002,25 @@ export default function runbooksExtension(pi: ExtensionAPI) {
       let gateResolution: "approved" | "revision_requested" | "paused" | undefined;
       let revision: string | undefined;
       if (params.gate && ctx.hasUI) {
-        const choice = await ctx.ui.select(
-          "Workflow approval required",
-          ["Approve and continue", "Request changes", "Keep paused"],
-        );
-        if (choice === "Approve and continue") {
-          await approveGate(ctx);
+        if (await confirmGateApproval(ctx)) {
           gateResolution = "approved";
-        } else if (choice === "Request changes") {
-          const requested = await ctx.ui.input("What should Pi change?", "Describe the revision");
-          if (requested?.trim()) {
-            revision = requested.trim();
-            await requestGateRevision(ctx, revision);
-            gateResolution = "revision_requested";
+        } else {
+          const choice = await ctx.ui.select(
+            "Workflow remains paused",
+            ["Request changes", "Keep paused"],
+          );
+          if (choice === "Request changes") {
+            const requested = await ctx.ui.input("What should Pi change before approval?", "Describe the revision");
+            if (requested?.trim()) {
+              revision = requested.trim();
+              await requestGateRevision(ctx, revision);
+              gateResolution = "revision_requested";
+            } else {
+              gateResolution = "paused";
+            }
           } else {
             gateResolution = "paused";
           }
-        } else {
-          gateResolution = "paused";
         }
       } else if (params.gate) {
         gateResolution = "paused";
@@ -1521,8 +1563,13 @@ export default function runbooksExtension(pi: ExtensionAPI) {
           return;
         }
         if (command === "approve") {
-          await approveGate(ctx);
-          ctx.ui.notify("Runbook gate approved. Send the next instruction or continue the workflow.", "info");
+          const approved = await confirmGateApproval(ctx);
+          ctx.ui.notify(
+            approved
+              ? "Runbook gate approved. Send the next instruction or continue the workflow."
+              : "Runbook gate remains paused; request changes or approve it later.",
+            approved ? "info" : "warning",
+          );
           return;
         }
         if (command === "close") {

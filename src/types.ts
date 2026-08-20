@@ -99,6 +99,9 @@ export interface RunbookRun {
     id: string;
     prompt: string;
     requestedAt: string;
+    stage?: string;
+    summary?: string;
+    artifactPaths?: string[];
   };
   toolAttestations: ToolAttestation[];
   completionReview?: {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import runbooksExtension, { approvalExplanation } from "../extensions/runbooks.js";
+import runbooksExtension, { approvalExplanation, workflowGateExplanation } from "../extensions/runbooks.js";
 import { ArtifactStore } from "../src/artifacts.js";
 import { CANDIDATE_METADATA_FILE, listProjectCandidates, selectProjectCandidate, writeCandidateMetadata } from "../src/candidates.js";
 import { validateContract, isApplicable } from "../src/contract.js";
@@ -567,6 +567,37 @@ test("success predicates and effect policy fail closed", async () => {
   assert.match(explanation, /workflow goal.*Deploy the application infrastructure/s);
   assert.match(explanation, /Risks if approved:.*downtime, data loss, or cost changes/s);
   assert.match(explanation, /Exact command:\nterraform apply plan\.tfplan/);
+});
+
+test("workflow gate approval explains the decision, scope, and consequences", () => {
+  const explanation = workflowGateExplanation(
+    {
+      runbookName: "deploy-app",
+      originalPrompt: "Deploy the reviewed plan to staging",
+      currentStage: "plan-review",
+      pendingGate: {
+        id: "approve-plan",
+        prompt: "Confirm that the staging infrastructure plan is acceptable",
+        requestedAt: new Date().toISOString(),
+        stage: "plan-review",
+        summary: "Generated and reviewed the infrastructure plan; deployment remains.",
+        artifactPaths: ["results/plan.txt"],
+      },
+    } as any,
+    {
+      description: "Review and deploy application infrastructure",
+      allowedEffectClasses: ["filesystem.read", "process.exec", "governance"],
+    } as any,
+  );
+
+  assert.match(explanation, /Decision requested:\nConfirm that the staging infrastructure plan is acceptable/);
+  assert.match(explanation, /What has been completed:.*Generated and reviewed/s);
+  assert.match(explanation, /Why continuation is requested:.*Deploy the reviewed plan to staging/s);
+  assert.match(explanation, /What approval does:.*Releases only this workflow gate/s);
+  assert.match(explanation, /does not pre-approve a command, deployment, publication/s);
+  assert.match(explanation, /Potential consequences:.*later workflow stages/s);
+  assert.match(explanation, /Checkpoint artifacts:\n- results\/plan\.txt/);
+  assert.match(explanation, /workflow remains paused and you can request changes/);
 });
 
 test("run artifacts cannot resolve through symlinks outside the run directory", async () => {
