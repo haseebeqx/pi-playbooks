@@ -1,6 +1,7 @@
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { Text } from "@earendil-works/pi-tui";
 import {
   CONFIG_DIR_NAME,
   getAgentDir,
@@ -199,8 +200,16 @@ export default function runbooksExtension(pi: ExtensionAPI) {
   let learningActive = false;
   let completionCwd: string | undefined;
   let completionProjectTrusted = false;
+  let reviewReminderPending = false;
   const governedToolNames = new Set(["runbook_checkpoint", "runbook_finish", "runbook_complete_learning"]);
   const assignmentEntryType = "pi-runbooks:assignment";
+  const reviewReminderEntryType = "pi-runbooks:review-reminder";
+
+  pi.registerEntryRenderer<{ message: string }>(reviewReminderEntryType, (entry, _options, theme) => {
+    const message = entry.data?.message ?? "You can close the runbook with /runbook close to initiate learning.";
+    const [before = "", after = ""] = message.split("/runbook close");
+    return new Text(`${theme.fg("text", before)}${theme.fg("success", "/runbook close")}${theme.fg("text", after)}`, 1, 0);
+  });
 
   const assignmentRunIds = (ctx: ExtensionContext): string[] => ctx.sessionManager.getBranch()
     .flatMap((entry) => {
@@ -627,6 +636,14 @@ export default function runbooksExtension(pi: ExtensionAPI) {
     // record supplies current status, gates, and the pinned artifact after a
     // process restart; unrelated branches and forked sessions do not inherit it.
     await setActive(await assignedRunForBranch(ctx), ctx);
+  });
+
+  pi.on("agent_settled", () => {
+    if (!reviewReminderPending || activeRun?.status !== "review") return;
+    reviewReminderPending = false;
+    pi.appendEntry(reviewReminderEntryType, {
+      message: "You can close the runbook with /runbook close to initiate learning.",
+    });
   });
 
   pi.on("session_tree", async (_event, ctx) => {
@@ -1085,6 +1102,7 @@ export default function runbooksExtension(pi: ExtensionAPI) {
         data: { outcome: params.outcome, predicateResults },
       });
       await setActive(activeRun, ctx);
+      reviewReminderPending = true;
       return {
         content: [{
           type: "text",

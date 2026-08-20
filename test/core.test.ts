@@ -38,6 +38,7 @@ test("extension loading registers only the runbook namespace and tools", () => {
   const loadingApi = {
     on: () => { registrations.events += 1; },
     registerTool: (tool: { name: string }) => { registrations.tools.push(tool.name); },
+    registerEntryRenderer: () => {},
     registerCommand: (name: string) => { registrations.commands.push(name); },
     getActiveTools: () => { throw new Error("action method called during extension loading"); },
     getAllTools: () => { throw new Error("action method called during extension loading"); },
@@ -45,7 +46,7 @@ test("extension loading registers only the runbook namespace and tools", () => {
   } as unknown as ExtensionAPI;
 
   assert.doesNotThrow(() => runbooksExtension(loadingApi));
-  assert.equal(registrations.events, 8);
+  assert.equal(registrations.events, 9);
   assert.deepEqual(registrations.commands, ["runbook"]);
   assert.deepEqual(registrations.tools.sort(), ["runbook_checkpoint", "runbook_complete_learning", "runbook_finish"]);
 });
@@ -76,6 +77,7 @@ test("runbook command completes only approved names without invoking the model",
       if (name === "session_start") sessionStart = handler;
     },
     registerTool: () => {},
+    registerEntryRenderer: () => {},
     registerCommand: (_name: string, options: { getArgumentCompletions: typeof getArgumentCompletions }) => {
       getArgumentCompletions = options.getArgumentCompletions;
     },
@@ -133,11 +135,15 @@ test("extension restores an active run and its prompt controls when the same ses
   });
 
   const handlers = new Map<string, (event: unknown, ctx: any) => Promise<any>>();
+  const tools = new Map<string, any>();
+  const appendedEntries: Array<{ customType: string; data: unknown }> = [];
   let activeTools = ["read", "bash"];
   const api = {
     on: (name: string, handler: (event: unknown, ctx: any) => Promise<any>) => { handlers.set(name, handler); },
-    registerTool: () => {},
+    registerTool: (tool: { name: string }) => { tools.set(tool.name, tool); },
+    registerEntryRenderer: () => {},
     registerCommand: () => {},
+    appendEntry: (customType: string, data: unknown) => { appendedEntries.push({ customType, data }); },
     getActiveTools: () => activeTools,
     setActiveTools: (tools: string[]) => { activeTools = tools; },
     getAllTools: () => [],
@@ -177,6 +183,22 @@ test("extension restores an active run and its prompt controls when the same ses
   assert.match(result?.systemPrompt ?? "", new RegExp(`Pinned artifact: ${sealed.digest}`));
   assert.doesNotMatch(result?.systemPrompt ?? "", /Run ID:|Assignment ID:/);
   assert.match(result?.systemPrompt ?? "", /# Procedure/);
+
+  await tools.get("runbook_finish").execute(
+    "finish-call",
+    { outcome: "failure", summary: "Ready for review" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.equal(appendedEntries.length, 0, "the reminder waits until the assistant output has settled");
+  await handlers.get("agent_settled")?.({}, ctx);
+  assert.deepEqual(appendedEntries, [{
+    customType: "pi-runbooks:review-reminder",
+    data: { message: "You can close the runbook with /runbook close to initiate learning." },
+  }]);
+  await handlers.get("agent_settled")?.({}, ctx);
+  assert.equal(appendedEntries.length, 1, "the reminder is shown only once per review submission");
 });
 
 test("from-skill resolves currently loaded Pi skills by name", async () => {
@@ -188,6 +210,7 @@ test("from-skill resolves currently loaded Pi skills by name", async () => {
   const api = {
     on: () => {},
     registerTool: () => {},
+    registerEntryRenderer: () => {},
     registerCommand: (_name: string, options: { handler: typeof handler }) => { handler = options.handler; },
     getCommands: () => [{
       name: "skill:release-check",
@@ -418,6 +441,7 @@ test("runbook list is concise by default and exposes details on request", async 
     runbooksExtension({
       on: () => {},
       registerTool: () => {},
+      registerEntryRenderer: () => {},
       registerCommand: (_name: string, options: { handler: typeof handler }) => { handler = options.handler; },
     } as unknown as ExtensionAPI);
   } finally {
