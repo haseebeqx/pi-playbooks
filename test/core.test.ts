@@ -610,14 +610,16 @@ test("workflow gate approval explains the decision, scope, and consequences", ()
     } as any,
   );
 
-  assert.match(explanation, /Decision requested:\nConfirm that the staging infrastructure plan is acceptable/);
-  assert.match(explanation, /What has been completed:.*Generated and reviewed/s);
-  assert.match(explanation, /Why continuation is requested:.*Deploy the reviewed plan to staging/s);
-  assert.match(explanation, /What approval does:.*Releases only this workflow gate/s);
-  assert.match(explanation, /does not pre-approve a command, deployment, publication/s);
-  assert.match(explanation, /Potential consequences:.*later workflow stages/s);
-  assert.match(explanation, /Checkpoint artifacts:\n- results\/plan\.txt/);
-  assert.match(explanation, /workflow remains paused and you can request changes/);
+  assert.match(explanation, /Decision: Confirm that the staging infrastructure plan is acceptable/);
+  assert.match(explanation, /Completed \(plan-review\): Generated and reviewed/);
+  assert.match(explanation, /Context: deploy-app — Review and deploy application infrastructure/);
+  assert.match(explanation, /Request: Deploy the reviewed plan to staging/);
+  assert.match(explanation, /Approval: Continue past this gate under policy/);
+  assert.match(explanation, /does not approve any high-risk action/);
+  assert.match(explanation, /Risk: Later stages may create allowed local or external effects/);
+  assert.match(explanation, /Artifacts: results\/plan\.txt/);
+  assert.match(explanation, /Decline: The workflow stays paused and you can request changes/);
+  assert.equal(explanation.split("\n").length, 8);
 });
 
 test("run artifacts cannot resolve through symlinks outside the run directory", async () => {

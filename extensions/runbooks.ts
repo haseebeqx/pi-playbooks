@@ -132,16 +132,23 @@ export function workflowGateExplanation(run: RunbookRun, contract: RunbookContra
   const gate = run.pendingGate;
   const stage = gate.stage ?? run.currentStage ?? "unspecified stage";
   const summary = gate.summary
-    ? conciseContext(gate.summary, 500)
-    : "No separate checkpoint summary was recorded.";
+    ? conciseContext(gate.summary, 180)
+    : "No checkpoint summary recorded";
   const artifacts = gate.artifactPaths?.length
-    ? gate.artifactPaths.map((path) => `- ${path}`).join("\n")
-    : "- No checkpoint artifacts were declared.";
+    ? gate.artifactPaths.join(", ")
+    : "None declared";
   const effects = contract.allowedEffectClasses.includes("*")
-    ? "any effect needed by the governed workflow, subject to separate high-risk action approvals"
+    ? "all workflow effects; high-risk actions require separate approval"
     : contract.allowedEffectClasses.join(", ") || "no declared effects";
 
-  return `Decision requested:\n${gate.prompt}\n\nWhat has been completed:\nStage: ${stage}\n${summary}\n\nWhy continuation is requested:\nThis gate belongs to “${run.runbookName}”, whose goal is “${conciseContext(contract.description)}”, for the current request “${conciseContext(run.originalPrompt)}”.\n\nWhat approval does:\n- Releases only this workflow gate and allows Pi to continue to later stages.\n- Later work remains limited by the runbook policy (${effects}).\n- Approval does not pre-approve a command, deployment, publication, or other high-risk action; those still require their own review.\n\nPotential consequences:\n- Pi may perform later workflow stages and produce additional local or external effects allowed by the runbook.\n- Approval does not guarantee that the completed stage is correct; verify the decision request and checkpoint summary before continuing.\n\nCheckpoint artifacts:\n${artifacts}\n\nIf you do not approve, the workflow remains paused and you can request changes.`;
+  return `Decision: ${conciseContext(gate.prompt, 180)}
+Completed (${stage}): ${summary}
+Context: ${run.runbookName} — ${conciseContext(contract.description, 160)}
+Request: ${conciseContext(run.originalPrompt, 160)}
+Approval: Continue past this gate under policy (${effects}). It does not approve any high-risk action.
+Risk: Later stages may create allowed local or external effects; approval does not verify the work above.
+Artifacts: ${artifacts}
+Decline: The workflow stays paused and you can request changes.`;
 }
 
 function firstUserText(ctx: ExtensionContext): string | undefined {
